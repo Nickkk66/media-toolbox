@@ -9,6 +9,8 @@ directories:
 files:
   - "src/**"
   - "package.json"
+  - "!src/songs/inmysystemalbumart.jpg"
+  - "!src/songs/You Are in My System.mp3"
 
 # Bundle ffmpeg/ffprobe so the installer is fully self-contained.
 # These land in <app>/resources/bin and are resolved by ffmpegPath.js.

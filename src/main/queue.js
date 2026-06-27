@@ -35,6 +35,17 @@ class Queue {
     for (const jobId of this.order) this.cancel(jobId);
   }
 
+  pause(jobId) {
+    const e = this.jobs.get(jobId);
+    if (e && e.status === 'running' && e.controller && e.controller.pause) return e.controller.pause();
+    return false;
+  }
+  resume(jobId) {
+    const e = this.jobs.get(jobId);
+    if (e && e.status === 'running' && e.controller && e.controller.resume) return e.controller.resume();
+    return false;
+  }
+
   _overall() {
     const entries = [...this.jobs.values()];
     if (!entries.length) return 0;

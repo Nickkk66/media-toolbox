@@ -18,6 +18,13 @@ contextBridge.exposeInMainWorld('api', {
   pdfMerge: (inputs, outputDir) => ipcRenderer.invoke('pdf:merge', { inputs, outputDir }),
   cancelJob: (jobId) => ipcRenderer.invoke('job:cancel', jobId),
   cancelAll: () => ipcRenderer.invoke('job:cancelAll'),
+  pauseJob: (jobId) => ipcRenderer.invoke('job:pause', jobId),
+  resumeJob: (jobId) => ipcRenderer.invoke('job:resume', jobId),
+  deleteFile: (p) => ipcRenderer.invoke('fs:delete', p),
+  newWindow: () => ipcRenderer.invoke('win:new'),
+  onSecondInstance: (cb) => ipcRenderer.on('app:second-instance', () => cb()),
+  metaRead: (inputPath) => ipcRenderer.invoke('meta:read', inputPath),
+  metaWrite: (opts) => ipcRenderer.invoke('meta:write', opts),
 
   showItem: (filePath) => ipcRenderer.invoke('shell:showItem', filePath),
   openPath: (p) => ipcRenderer.invoke('shell:openPath', p),
@@ -36,6 +43,10 @@ contextBridge.exposeInMainWorld('api', {
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (s) => ipcRenderer.invoke('settings:set', s),
+  resetSettings: () => ipcRenderer.invoke('settings:reset'),
+  exportSettings: () => ipcRenderer.invoke('settings:export'),
+  importSettings: () => ipcRenderer.invoke('settings:import'),
+  clearCache: () => ipcRenderer.invoke('settings:clearCache'),
 
   onJobProgress: (cb) => ipcRenderer.on('job:progress', (_e, d) => cb(d)),
   onJobDone: (cb) => ipcRenderer.on('job:done', (_e, d) => cb(d)),

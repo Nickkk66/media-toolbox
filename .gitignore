@@ -6,3 +6,5 @@ vendor/gs/*.dll
 vendor/qpdf/*.exe
 vendor/qpdf/*.dll
 *.log
+# Bundled demo media (copyrighted; kept local only)
+src/songs/

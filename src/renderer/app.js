@@ -31,10 +31,42 @@ function injectIcons(root = document) {
 function defaultSettingsFor(type) {
   return state.caps && state.caps.media[type] ? JSON.parse(JSON.stringify(state.caps.media[type].defaults)) : {};
 }
+
+// ---------- custom dropdown (replaces the native OS <select> popup) ----------
+function customSelect(sel) {
+  if (!sel || sel.dataset.cs) return; sel.dataset.cs = '1';
+  const wrap = document.createElement('div'); wrap.className = 'cs';
+  const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'cs-btn';
+  const list = document.createElement('div'); list.className = 'cs-list hidden';
+  const render = () => { const o = sel.options[sel.selectedIndex]; btn.innerHTML = `<span class="cs-cur">${o ? o.text : ''}</span><span class="cs-chev">${icon('chevron')}</span>`; };
+  const close = () => { list.classList.add('hidden'); document.removeEventListener('mousedown', outside, true); };
+  const outside = (e) => { if (!wrap.contains(e.target)) close(); };
+  const open = () => {
+    list.innerHTML = '';
+    [...sel.options].forEach((o, i) => {
+      const it = document.createElement('div');
+      it.className = 'cs-opt' + (i === sel.selectedIndex ? ' sel' : '') + (o.disabled ? ' dis' : '');
+      it.textContent = o.text;
+      it.addEventListener('click', () => { if (o.disabled) return; sel.selectedIndex = i; render(); sel.dispatchEvent(new Event('change', { bubbles: true })); close(); });
+      list.appendChild(it);
+    });
+    list.classList.remove('hidden');
+    document.addEventListener('mousedown', outside, true);
+  };
+  btn.addEventListener('click', (e) => { e.stopPropagation(); list.classList.contains('hidden') ? open() : close(); });
+  sel.parentNode.insertBefore(wrap, sel); wrap.appendChild(btn); wrap.appendChild(list); wrap.appendChild(sel);
+  sel.style.display = 'none'; sel._csRender = render; render();
+}
+function enhanceSelects(root) { (root || document).querySelectorAll('select:not([data-cs])').forEach(customSelect); }
 function setHero(title, sub) { $('heroTitle').textContent = title; $('heroSub').textContent = sub; }
 
-const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel'];
-function hideAll() { PANELS.forEach((id) => $(id).classList.add('hidden')); }
+const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'profilePanel', 'metaPanel'];
+function hideAll() {
+  PANELS.forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
+  document.body.classList.remove('on-profile');
+  cancelAnimationFrame(pixelRaf);
+  const a = $('apAudio'); if (a && !a.paused) { a.pause(); const pl = $('apPlay'); if (pl) pl.querySelector('.ic').innerHTML = icon('play'); }
+}
 
 // ---------- spring helper (damped harmonic oscillator) ----------
 // Mirrors framer-motion's spring "bounce" feel used by the bouncy-accordion.
@@ -144,6 +176,7 @@ function openItem(item, kind) {
   if (item.engine === 'special') return openSpecial(item.id);
   if (item.engine === 'colorpicker') return openColorPicker();
   if (item.engine === 'stretch') return openStretch();
+  if (item.engine === 'metaedit') return openMetaEditor();
   hideAll();
   $('toolHeader').classList.remove('hidden');
   $('toolName').textContent = item.label;
@@ -192,6 +225,7 @@ function renderToolOptions() {
   else { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
   const note = op === 'crop' ? '<div class="hint" style="margin-top:10px">Common sizes — TikTok/Reels 1080×1920 · YouTube 1920×1080 · Square 1080×1080 · Story 1080×1920</div>' : '';
   bar.innerHTML = `<div class="to-title">Options</div><div class="to-fields">${html}</div>${note}`;
+  enhanceSelects(bar);
   bar.querySelectorAll('[data-k]').forEach((el) => el.addEventListener('input', () => {
     const k = el.dataset.k; b[k] = el.type === 'number' ? Number(el.value) : el.value;
     for (const e of ws.list.values()) e.settings[k] = b[k];
@@ -237,32 +271,77 @@ function renderList() {
   const formats = state.caps && state.caps.media[ws.mediaType] ? state.caps.media[ws.mediaType].outputFormats : [];
   const showCog = !ws.isOp && !ws.isMerge;
 
-  for (const entry of ws.list.values()) {
-    const row = document.createElement('div'); row.className = 'file-row';
-    const fmtOpts = formats.map((f) => `<option value="${f.value}" ${entry.settings.outputFormat === f.value ? 'selected' : ''}>${f.label}</option>`).join('');
-    const outCtl = ws.lockFmt
-      ? `<span class="fr-format locked">${String(entry.settings.outputFormat || ws.item.out || '').toUpperCase()}</span>`
-      : `<select class="fr-format">${fmtOpts}</select>`;
-    row.innerHTML = `
-      <div class="fr-info"><div class="fr-name"></div><div class="fr-meta"></div></div>
-      <div class="fr-controls">
-        ${ws.isMerge ? '' : `<span class="lbl">${ws.convert ? 'To:' : 'Output:'}</span>${outCtl}`}
-        ${showCog ? `<button class="icon-btn fr-cog" title="Advanced options"><span class="ic">${icon('settings')}</span></button>` : ''}
-        <button class="icon-btn fr-del" title="Remove"><span class="ic">${icon('x')}</span></button>
-      </div>
-      <div class="fr-progress hidden"><div class="bar"><div class="bar-fill"></div></div><div class="fr-status"></div></div>`;
-    row.querySelector('.fr-name').textContent = entry.name;
-    row.querySelector('.fr-meta').textContent = metaLine(entry);
-    const sel = row.querySelector('select.fr-format'); if (sel) sel.addEventListener('change', () => { entry.settings.outputFormat = sel.value; });
-    const cog = row.querySelector('.fr-cog'); if (cog) cog.addEventListener('click', () => openModal(entry.jobId));
-    row.querySelector('.fr-del').addEventListener('click', () => { if (entry.status === 'running') window.api.cancelJob(entry.jobId); ws.list.delete(entry.jobId); renderList(); });
-    row.addEventListener('dblclick', () => { if (entry.status === 'done' && entry.outputPath) window.api.showItem(entry.outputPath); });
-    entry.els = { row, progress: row.querySelector('.fr-progress'), bar: row.querySelector('.bar-fill'), status: row.querySelector('.fr-status') };
-    if (['running', 'done', 'error'].includes(entry.status)) entry.els.progress.classList.remove('hidden');
-    container.appendChild(row);
+  for (const entry of ws.list.values()) container.appendChild(buildRow(entry, ws, formats, showCog));
+  refreshFooter();
+}
+
+// Build one file row. Controls are swapped in place by status (no full re-render).
+function buildRow(entry, ws, formats, showCog) {
+  const row = document.createElement('div'); row.className = 'file-row';
+  row.innerHTML = `
+    <div class="fr-info"><div class="fr-name"></div><div class="fr-meta"></div></div>
+    <div class="fr-controls"><span class="lbl"></span><span class="fr-out"></span><div class="fr-actions"></div></div>
+    <div class="fr-progress hidden"><div class="bar"><div class="bar-fill"></div></div><div class="fr-status"></div></div>`;
+  row.querySelector('.fr-name').textContent = entry.name;
+  row.querySelector('.fr-meta').textContent = metaLine(entry);
+  row.addEventListener('dblclick', () => { if (entry.status === 'done' && entry.outputPath) window.api.showItem(entry.outputPath); });
+  entry.els = {
+    row, ws, formats, showCog,
+    out: row.querySelector('.fr-out'), lbl: row.querySelector('.lbl'), actions: row.querySelector('.fr-actions'),
+    progress: row.querySelector('.fr-progress'), bar: row.querySelector('.bar-fill'), status: row.querySelector('.fr-status'),
+    setDone: () => applyRowControls(entry),
+  };
+  if (['running', 'queued', 'done', 'error'].includes(entry.status)) entry.els.progress.classList.remove('hidden');
+  applyRowControls(entry);
+  return row;
+}
+
+function iconBtn(ic, title, cls) { return `<button class="icon-btn ${cls || ''}" title="${title}"><span class="ic">${icon(ic)}</span></button>`; }
+
+function applyRowControls(entry) {
+  const ws = entry.els.ws, els = entry.els;
+  const st = entry.status;
+  // Output selector (only before a job is running/done).
+  if (ws.isMerge || ['queued', 'running', 'done'].includes(st)) { els.lbl.textContent = ''; els.out.innerHTML = ''; }
+  else {
+    els.lbl.textContent = ws.convert ? 'To:' : 'Output:';
+    if (ws.lockFmt) els.out.innerHTML = `<span class="fr-format locked">${String(entry.settings.outputFormat || ws.item.out || '').toUpperCase()}</span>`;
+    else {
+      els.out.innerHTML = `<select class="fr-format">${els.formats.map((f) => `<option value="${f.value}" ${entry.settings.outputFormat === f.value ? 'selected' : ''}>${f.label}</option>`).join('')}</select>`;
+      const sel = els.out.querySelector('select'); customSelect(sel); sel.addEventListener('change', () => { entry.settings.outputFormat = sel.value; });
+    }
   }
+  // Action buttons.
+  const a = els.actions; a.innerHTML = '';
+  if (st === 'queued' || st === 'running') {
+    a.innerHTML = iconBtn(entry.paused ? 'play' : 'pause', entry.paused ? 'Resume' : 'Pause', 'fr-pause') + iconBtn('stop', 'Stop', 'fr-stop');
+    a.querySelector('.fr-pause').addEventListener('click', () => {
+      if (entry.paused) { window.api.resumeJob(entry.jobId); entry.paused = false; } else { window.api.pauseJob(entry.jobId); entry.paused = true; }
+      applyRowControls(entry);
+    });
+    a.querySelector('.fr-stop').addEventListener('click', () => window.api.cancelJob(entry.jobId));
+  } else if (st === 'done') {
+    a.innerHTML = iconBtn('folder', 'Open', 'fr-open') + iconBtn('trash', 'Delete file', 'fr-trash');
+    a.querySelector('.fr-open').addEventListener('click', () => entry.outputPath && window.api.showItem(entry.outputPath));
+    a.querySelector('.fr-trash').addEventListener('click', async () => {
+      await window.api.deleteFile(entry.outputPath);
+      els.row.classList.add('pop-out');
+      setTimeout(() => { els.row.remove(); state.ws.list.delete(entry.jobId); refreshFooter(); }, 360);
+    });
+  } else {
+    if (els.showCog) { a.innerHTML += iconBtn('settings', 'Advanced options', 'fr-cog'); }
+    a.innerHTML += iconBtn('x', 'Remove', 'fr-del');
+    const cog = a.querySelector('.fr-cog'); if (cog) cog.addEventListener('click', () => openModal(entry.jobId));
+    a.querySelector('.fr-del').addEventListener('click', () => { state.ws.list.delete(entry.jobId); els.row.remove(); refreshFooter(); });
+  }
+}
+
+function refreshFooter() {
+  const ws = state.ws; if (!ws) return;
   const ready = [...ws.list.values()].filter((e) => e.status === 'ready' || e.status === 'error').length;
   $('footerCount').textContent = `Added ${ws.list.size} file${ws.list.size === 1 ? '' : 's'}`;
+  $('emptyHint').classList.toggle('hidden', ws.list.size > 0);
+  $('footer').classList.toggle('hidden', ws.list.size === 0);
   $('btnCompress').disabled = ws.isMerge ? ws.list.size < 2 : ready === 0;
 }
 function findEntry(jobId) { return state.ws && state.ws.list.has(jobId) ? state.ws.list.get(jobId) : null; }
@@ -283,13 +362,14 @@ async function runActive() {
     if (entry.status !== 'ready' && entry.status !== 'error') continue;
     if (!entry.meta) continue;
     entry.status = 'queued';
-    if (entry.els) { entry.els.progress.classList.remove('hidden'); entry.els.status.textContent = 'Queued'; entry.els.status.className = 'fr-status'; }
+    // Update this row IN PLACE — don't rebuild the list (keeps everything stable).
+    if (entry.els) { entry.els.progress.classList.remove('hidden'); entry.els.status.textContent = 'Queued'; entry.els.status.className = 'fr-status'; applyRowControls(entry); }
     try {
       const { outputPath } = await window.api.startJob({ jobId: entry.jobId, mediaType: entry.mediaType, inputPath: entry.path, settings: entry.settings, meta: entry.meta, outputDir: state.outputDir, convert: !!entry.convert });
       entry.outputPath = outputPath;
-    } catch (err) { entry.status = 'error'; if (entry.els) { entry.els.status.textContent = 'Failed: ' + (err.message || err); entry.els.status.className = 'fr-status error'; } }
+    } catch (err) { entry.status = 'error'; if (entry.els) { entry.els.status.textContent = 'Failed: ' + (err.message || err); entry.els.status.className = 'fr-status error'; applyRowControls(entry); } }
   }
-  renderList();
+  refreshFooter();
 }
 function wireJobEvents() {
   window.api.onJobProgress((d) => {
@@ -302,19 +382,21 @@ function wireJobEvents() {
   window.api.onJobDone((d) => {
     // Stretch tool job (no file row).
     if (d.jobId === state._stretchJob) {
-      $('stBar').style.width = '100%'; $('stStatus').className = 'fr-status done'; $('stStatus').textContent = `Done (${fmtBytes(d.outSize)}) — click to open`; $('stStatus').onclick = () => window.api.showItem(d.outputPath); $('stRender').disabled = false; toast('Stretch complete'); state._stretchJob = null; return;
+      $('stBar').style.width = '100%'; $('stStatus').className = 'fr-status done'; $('stStatus').textContent = `Done (${fmtBytes(d.outSize)}) — click to open`; $('stStatus').onclick = () => window.api.showItem(d.outputPath); $('stRender').disabled = false; toast('Stretch complete', { path: d.outputPath }); state._stretchJob = null; return;
     }
     const e = findEntry(d.jobId); if (!e || !e.els) { toast('Done'); return; }
     e.status = 'done'; e.outputPath = d.outputPath; e.els.bar.classList.remove('indet'); e.els.bar.style.width = '100%';
     const was = e.meta ? `, was ${fmtBytes(e.meta.sizeBytes)}` : '';
     e.els.status.textContent = `Done (${fmtBytes(d.outSize)}${was}) — double-click to open`; e.els.status.className = 'fr-status done';
-    toast(`Done: ${e.name}`);
+    if (e.els.setDone) e.els.setDone();
+    toast(`Done: ${e.name}`, { path: d.outputPath });
   });
   window.api.onJobError((d) => {
     const e = findEntry(d.jobId); if (!e || !e.els) return;
     const c = String(d.message).includes('canceled');
-    e.status = c ? 'ready' : 'error'; e.els.bar.classList.remove('indet'); e.els.bar.style.width = '0%';
+    e.status = c ? 'ready' : 'error'; e.paused = false; e.els.bar.classList.remove('indet'); e.els.bar.style.width = '0%';
     e.els.status.textContent = c ? 'Canceled' : ('Error: ' + d.message.split('\n')[0]); e.els.status.className = c ? 'fr-status' : 'fr-status error';
+    applyRowControls(e); refreshFooter();
   });
 }
 
@@ -332,7 +414,7 @@ function openModal(jobId) {
   const e = findEntry(jobId); if (!e) return;
   state.modalJobId = jobId;
   $('modalFileName').textContent = `${e.name} (${fmtBytes(e.meta ? e.meta.sizeBytes : 0)})`;
-  $('modalBody').innerHTML = buildModalBody(e); wireModalBody(e); injectIcons($('modalBody'));
+  $('modalBody').innerHTML = buildModalBody(e); wireModalBody(e); injectIcons($('modalBody')); enhanceSelects($('modalBody'));
   $('modalApplyAll').checked = false; $('modalOverlay').classList.remove('hidden');
 }
 function closeModal() { $('modalOverlay').classList.add('hidden'); state.modalJobId = null; }
@@ -425,12 +507,12 @@ function pdf2imgModal(s) {
 function wireModalBody(e) {
   const s = e.settings, t = e.mediaType;
   if (t === 'video') {
-    const rm = () => { $('m_methodFields').innerHTML = methodFieldsHtml(s); syncPair('m_percent', 'm_percentN'); syncPair('m_crf', 'm_crfN'); };
-    const rs = () => { $('m_subFields').innerHTML = subFieldsHtml(s); const pk = $('m_subPick'); if (pk) pk.addEventListener('click', async () => { const p = await window.api.pickSubtitle(); if (p) { s.subtitle = s.subtitle || { mode: 'hard' }; s.subtitle.path = p; $('m_subName').textContent = baseName(p); } }); };
+    const rm = () => { $('m_methodFields').innerHTML = methodFieldsHtml(s); syncPair('m_percent', 'm_percentN'); syncPair('m_crf', 'm_crfN'); enhanceSelects($('m_methodFields')); };
+    const rs = () => { $('m_subFields').innerHTML = subFieldsHtml(s); const pk = $('m_subPick'); if (pk) pk.addEventListener('click', async () => { const p = await window.api.pickSubtitle(); if (p) { s.subtitle = s.subtitle || { mode: 'hard' }; s.subtitle.path = p; $('m_subName').textContent = baseName(p); } }); enhanceSelects($('m_subFields')); };
     rm(); rs(); syncPair('m_vol', 'm_volN');
     $('m_method').addEventListener('change', (ev) => { s.method = ev.target.value; rm(); });
     $('m_subAdd').addEventListener('change', (ev) => { s.subtitle = ev.target.value === 'upload' ? (s.subtitle || { path: null, mode: 'hard' }) : undefined; rs(); });
-  } else if (t === 'audio') { const m = $('m_method'); if (m) m.addEventListener('change', (ev) => { s.method = ev.target.value; $('modalBody').innerHTML = audioModal(s); wireModalBody(e); }); }
+  } else if (t === 'audio') { const m = $('m_method'); if (m) m.addEventListener('change', (ev) => { s.method = ev.target.value; $('modalBody').innerHTML = audioModal(s); wireModalBody(e); injectIcons($('modalBody')); enhanceSelects($('modalBody')); }); }
   else { syncPair('m_q', 'm_qN'); syncPair('m_scale', 'm_scaleN'); syncPair('m_colors', 'm_colorsN'); }
 }
 function syncPair(a, b) { const r = $(a), n = $(b); if (!r || !n) return; r.addEventListener('input', () => { n.value = r.value; }); n.addEventListener('input', () => { r.value = n.value; }); }
@@ -475,12 +557,56 @@ function applyModal() {
 // ---------- special tools ----------
 function openSpecial(id) {
   hideAll(); $('toolHeader').classList.remove('hidden');
-  const names = { youtube: 'YouTube Downloader', 'unit-converter': 'Unit Converter', 'time-converter': 'Time Converter', 'archive-converter': 'Archive Converter' };
+  const names = { youtube: 'Video Downloader', 'unit-converter': 'Unit Converter', 'time-converter': 'Time Converter', 'archive-converter': 'Archive Converter' };
   $('toolName').textContent = names[id] || '';
-  if (id === 'youtube') { setHero('YouTube Downloader', 'Download and convert videos with yt-dlp'); $('ytPanel').classList.remove('hidden'); }
+  if (id === 'youtube') { setHero('Video Downloader', "Paste a link and it'll download & convert — powered by yt-dlp"); $('ytPanel').classList.remove('hidden'); }
   else if (id === 'unit-converter') { setHero('Unit Converter', 'Convert between common units'); $('unitPanel').classList.remove('hidden'); }
   else if (id === 'time-converter') { setHero('Time Converter', 'Time zones and Unix timestamps'); $('timePanel').classList.remove('hidden'); }
   else if (id === 'archive-converter') { openItem(window.findConverter('archive-converter'), 'convert'); }
+}
+
+// ---------- Metadata editor ----------
+const META_LABELS = { title: 'Title', artist: 'Artist', album: 'Album', album_artist: 'Album artist', composer: 'Composer', genre: 'Genre', date: 'Year', track: 'Track', comment: 'Comment', description: 'Description' };
+const metaState = { path: null, original: {}, keys: [] };
+function openMetaEditor() {
+  hideAll(); state.section = 'tools';
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Metadata Editor';
+  setHero('Metadata Editor', 'Edit or scrub the metadata baked into a media file');
+  $('metaPanel').classList.remove('hidden');
+}
+function renderMetaFields(tags) {
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // Render an input for every key the file surfaced (standard + the file's own tags),
+  // each pre-filled with its current value so the user edits instead of guessing.
+  const keys = metaState.keys.length ? metaState.keys : Object.keys(META_LABELS);
+  $('meFields').innerHTML = keys.map((k) => `<label class="field"><span>${esc(META_LABELS[k] || k)}</span><input type="text" data-mk="${esc(k)}" value="${esc(tags[k])}"/></label>`).join('');
+}
+function wireMetaEditor() {
+  $('meLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths.length) return;
+    metaState.path = paths[0]; $('meName').textContent = baseName(paths[0]);
+    $('meStatus').textContent = ''; $('meStatus').className = 'fr-status';
+    try {
+      const r = await window.api.metaRead(paths[0]);
+      metaState.original = r.tags || {}; metaState.keys = r.keys || [];
+      renderMetaFields(metaState.original);
+      $('meEmpty').classList.add('hidden'); $('meBody').classList.remove('hidden');
+    } catch (e) { toast('Could not read metadata', { kind: 'error' }); }
+  });
+  const collect = () => { const t = {}; document.querySelectorAll('#meFields input[data-mk]').forEach((el) => { t[el.dataset.mk] = el.value; }); return t; };
+  const write = async (scrub) => {
+    if (!metaState.path) return;
+    $('meStatus').textContent = 'Saving…'; $('meStatus').className = 'fr-status';
+    try {
+      const res = await window.api.metaWrite({ inputPath: metaState.path, tags: scrub ? {} : collect(), scrub, outputDir: state.outputDir });
+      $('meStatus').textContent = `Saved → ${baseName(res.outputPath)}`; $('meStatus').className = 'fr-status done';
+      $('meStatus').onclick = () => window.api.showItem(res.outputPath);
+      toast(scrub ? 'Metadata scrubbed' : 'Metadata saved', { path: res.outputPath });
+    } catch (e) { $('meStatus').textContent = 'Error: ' + (e.message || e); $('meStatus').className = 'fr-status error'; }
+  };
+  $('meSave').addEventListener('click', () => write(false));
+  $('meScrub').addEventListener('click', () => write(true));
+  $('meReset').addEventListener('click', () => renderMetaFields(metaState.original));
 }
 
 // ---------- Color Picker ----------
@@ -513,6 +639,7 @@ function ytRefreshSub() {
   if (mode === 'audio') sub.innerHTML = ['mp3', 'ogg', 'm4a', 'opus', 'wav'].map((f) => `<option value="${f}">${f.toUpperCase()}</option>`).join('');
   else if (mode === 'video') sub.innerHTML = ['mp4', 'mkv', 'webm'].map((f) => `<option value="${f}">${f.toUpperCase()}</option>`).join('');
   else sub.innerHTML = ['with', 'without', 'captions'].map((f) => `<option value="${f}">${f === 'with' ? 'With timestamps' : f === 'without' ? 'Without timestamps (.txt)' : 'Captions (.srt)'}</option>`).join('');
+  if (sub._csRender) sub._csRender();
   ytRefreshQuality();
 }
 function ytRefreshQuality() {
@@ -521,6 +648,7 @@ function ytRefreshQuality() {
   wrap.classList.remove('hidden');
   if (mode === 'audio') { $('ytQualityLabel').textContent = 'Bitrate'; sel.innerHTML = [320, 256, 192, 128, 96].map((k) => `<option value="${k}">${k} kbps</option>`).join(''); }
   else { $('ytQualityLabel').textContent = 'Max resolution'; const hs = (yt.info && yt.info.heights.length) ? yt.info.heights : [2160, 1440, 1080, 720, 480, 360]; sel.innerHTML = `<option value="0">Best available</option>` + hs.map((h) => `<option value="${h}">${h}p</option>`).join(''); }
+  if (sel._csRender) sel._csRender();
 }
 async function ytFetch() {
   const url = $('ytUrl').value.trim(); if (!url) return;
@@ -538,11 +666,14 @@ async function ytDownload() {
   if (mode === 'audio') { opts.audioFormat = sub; opts.audioKbps = Number($('ytQuality').value); }
   else if (mode === 'video') { opts.audioFormat = sub; opts.height = Number($('ytQuality').value); }
   else { opts.subMode = sub; }
-  try { const res = await window.api.ytDownload(opts); $('ytBar').style.width = '100%'; $('ytStatus').className = 'fr-status done'; $('ytStatus').textContent = `Done (${fmtBytes(res.outSize)}) — click to open`; $('ytStatus').onclick = () => res.outputPath && window.api.showItem(res.outputPath); toast('YouTube download complete'); }
+  opts.thumbnail = $('ytThumb2').checked;
+  try { const res = await window.api.ytDownload(opts); $('ytBar').style.width = '100%'; $('ytStatus').className = 'fr-status done'; $('ytStatus').textContent = `Done (${fmtBytes(res.outSize)}) — click to open`; $('ytStatus').onclick = () => res.outputPath && window.api.showItem(res.outputPath); toast('YouTube download complete', { path: res.outputPath }); }
   catch (err) { const c = String(err.message).includes('canceled'); $('ytStatus').className = c ? 'fr-status' : 'fr-status error'; $('ytStatus').textContent = c ? 'Canceled' : ('Error: ' + String(err.message).split('\n')[0]); }
   finally { yt.downloading = false; $('ytDownload').disabled = false; $('ytCancel').classList.add('hidden'); }
 }
+const YT_SERVICES = ['youtube', 'bilibili', 'bluesky', 'dailymotion', 'facebook', 'instagram', 'loom', 'ok', 'pinterest', 'newgrounds', 'reddit', 'rutube', 'snapchat', 'soundcloud', 'streamable', 'tiktok', 'tumblr', 'twitch clips', 'twitter', 'vimeo', 'vk'];
 function wireYoutube() {
+  $('ytServicesChips').innerHTML = YT_SERVICES.map((s) => `<span class="yt-chip">${s}</span>`).join('');
   $('ytFetch').addEventListener('click', ytFetch);
   $('ytUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') ytFetch(); });
   $('ytMode').addEventListener('change', ytRefreshSub);
@@ -555,20 +686,25 @@ function wireYoutube() {
 // ---------- Unit / Time ----------
 const UNITS = { Length: { m: 1, km: 1000, cm: 0.01, mm: 0.001, mi: 1609.344, yd: 0.9144, ft: 0.3048, in: 0.0254 }, Weight: { kg: 1, g: 0.001, mg: 1e-6, lb: 0.45359237, oz: 0.0283495231, ton: 1000 }, Data: { B: 1, KB: 1024, MB: 1048576, GB: 1073741824, TB: 1099511627776 }, Speed: { 'm/s': 1, 'km/h': 0.277778, mph: 0.44704, knot: 0.514444 } };
 function unitInit() { const cat = $('unitCat'); cat.innerHTML = Object.keys(UNITS).concat(['Temperature']).map((c) => `<option>${c}</option>`).join(''); cat.addEventListener('change', unitFill); ['unitFrom', 'unitFromU', 'unitToU'].forEach((id) => $(id).addEventListener('input', unitCompute)); unitFill(); }
-function unitFill() { const c = $('unitCat').value; const u = c === 'Temperature' ? ['C', 'F', 'K'] : Object.keys(UNITS[c]); $('unitFromU').innerHTML = u.map((x) => `<option>${x}</option>`).join(''); $('unitToU').innerHTML = u.map((x, i) => `<option ${i === 1 ? 'selected' : ''}>${x}</option>`).join(''); unitCompute(); }
+function unitFill() { const c = $('unitCat').value; const u = c === 'Temperature' ? ['C', 'F', 'K'] : Object.keys(UNITS[c]); $('unitFromU').innerHTML = u.map((x) => `<option>${x}</option>`).join(''); $('unitToU').innerHTML = u.map((x, i) => `<option ${i === 1 ? 'selected' : ''}>${x}</option>`).join(''); ['unitFromU', 'unitToU'].forEach((id) => { const el = $(id); if (el._csRender) el._csRender(); }); unitCompute(); }
 function unitCompute() { const c = $('unitCat').value, val = parseFloat($('unitFrom').value), fu = $('unitFromU').value, tu = $('unitToU').value; if (isNaN(val)) { $('unitTo').value = ''; return; } let out; if (c === 'Temperature') { let k; if (fu === 'C') k = val + 273.15; else if (fu === 'F') k = (val - 32) * 5 / 9 + 273.15; else k = val; if (tu === 'C') out = k - 273.15; else if (tu === 'F') out = (k - 273.15) * 9 / 5 + 32; else out = k; } else out = val * UNITS[c][fu] / UNITS[c][tu]; $('unitTo').value = Number(out.toPrecision(8)).toString(); }
 const TZS = [['UTC', 0], ['New York (ET)', -5], ['Chicago (CT)', -6], ['Denver (MT)', -7], ['Los Angeles (PT)', -8], ['London', 0], ['Paris/Berlin', 1], ['Dubai', 4], ['India', 5.5], ['Tokyo', 9], ['Sydney', 11]];
 function timeInit() { const o = TZS.map(([n], i) => `<option value="${i}">${n}</option>`).join(''); $('timeFrom').innerHTML = o; $('timeTo').innerHTML = o; $('timeTo').value = '9'; ['timeInput', 'timeFrom', 'timeTo'].forEach((id) => $(id).addEventListener('input', timeCompute)); }
 function timeCompute() { const raw = $('timeInput').value; if (!raw) { $('timeOut').innerHTML = '<span class="muted">Pick a date and time above.</span>'; return; } const [, fOff] = TZS[Number($('timeFrom').value)], [toName, tOff] = TZS[Number($('timeTo').value)]; const local = new Date(raw); const utcMs = local.getTime() - local.getTimezoneOffset() * 60000 - fOff * 3600000; const target = new Date(utcMs + tOff * 3600000); const pad = (n) => String(n).padStart(2, '0'); const fmt = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; $('timeOut').innerHTML = `In <b>${toName}</b>: ${fmt(target)}<br>Unix timestamp: <b>${Math.floor(utcMs / 1000)}</b>`; }
 
-// ---------- toasts ----------
-function toast(msg, kind) {
+// ---------- toasts (persistent; hover for X; click opens the file location) ----------
+function toast(msg, opts) {
+  opts = opts || {};
   const el = document.createElement('div');
-  el.className = 'toast' + (kind === 'error' ? ' err' : '');
-  el.textContent = msg;
+  el.className = 'toast' + (opts.kind === 'error' ? ' err' : '') + (opts.path ? ' clickable' : '');
+  el.innerHTML = `<span class="toast-msg"></span><button class="toast-x" title="Dismiss"><span class="ic">${icon('x')}</span></button>`;
+  el.querySelector('.toast-msg').textContent = msg;
+  const close = () => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); };
+  el.querySelector('.toast-x').addEventListener('click', (e) => { e.stopPropagation(); close(); });
+  if (opts.path) el.addEventListener('click', () => window.api.showItem(opts.path));
   $('toasts').appendChild(el);
   requestAnimationFrame(() => el.classList.add('show'));
-  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, 3600);
+  return close;
 }
 
 // ---------- titlebar ----------
@@ -584,24 +720,295 @@ const PERF_OPTS = [
   ['recommended', 'Recommended', 'Balanced — about half your CPU cores. Suggested for most people.'],
   ['full', 'Full', 'Fastest — all cores. Your PC may get hot/loud during big jobs.'],
 ];
-function perfRadios(current) {
-  return PERF_OPTS.map(([v, l, d]) => `<label class="perf-opt"><input type="radio" name="perf" value="${v}" ${current === v ? 'checked' : ''}/><div><div class="perf-l">${l}</div><div class="perf-d">${d}</div></div></label>`).join('');
+function perfRadios(current, cores, threads) {
+  let h = PERF_OPTS.map(([v, l, d]) => `<label class="perf-opt"><input type="radio" name="perf" value="${v}" ${current === v ? 'checked' : ''}/><div><div class="perf-l">${l}</div><div class="perf-d">${d}</div></div></label>`).join('');
+  const cur = current === 'custom' ? (threads || 1) : Math.max(1, Math.floor((cores || 4) / 2));
+  h += `<label class="perf-opt"><input type="radio" name="perf" value="custom" ${current === 'custom' ? 'checked' : ''}/><div style="flex:1">
+      <div class="perf-l">Custom</div>
+      <div class="perf-d">Pick exactly how many CPU threads to use.</div>
+      <div class="slider-row" style="margin-top:8px"><input type="range" id="perfThreads" min="1" max="${cores || 8}" value="${cur}"/><span class="slider-val"><input type="number" id="perfThreadsN" value="${cur}" min="1" max="${cores || 8}"/> / ${cores || '?'}</span></div>
+    </div></label>`;
+  return h;
 }
-async function openSettings() {
+function dlRadios(cur, customDir) {
+  const opts = [['downloads', 'Downloads folder', 'Save everything to your Windows Downloads folder.'], ['source', 'Same as source file', 'Save next to the original file.'], ['custom', 'Custom folder', customDir || 'Pick a folder…']];
+  let h = opts.map(([v, l, d]) => `<label class="perf-opt"><input type="radio" name="dl" value="${v}" ${cur === v ? 'checked' : ''}/><div style="flex:1"><div class="perf-l">${l}</div><div class="perf-d" id="${v === 'custom' ? 'dlCustomDesc' : ''}">${d}</div>${v === 'custom' ? '<button class="btn ghost" id="dlPick" style="margin-top:6px">Choose folder…</button>' : ''}</div></label>`).join('');
+  return h;
+}
+// Apply theme + accessibility flags to the document.
+function applyClientSettings(s) {
+  const theme = s.theme || 'auto';
+  const dark = theme === 'dark' || (theme === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.body.dataset.theme = dark ? 'dark' : 'light';
+  document.body.classList.toggle('reduce-motion', !!s.reduceMotion);
+  document.body.classList.toggle('reduce-transparency', !!s.reduceTransparency);
+}
+async function persist(patch) { state.settings = await window.api.setSettings(patch); applyClientSettings(state.settings); }
+
+const SETTINGS_CATS = [
+  ['appearance', 'appearance', 'settings'],
+  ['accessibility', 'accessibility', 'user'],
+  ['video', 'video', 'video'],
+  ['audio', 'audio', 'audio'],
+  ['metadata', 'metadata', 'metadata'],
+  ['local', 'local processing', 'tools'],
+  ['instances', 'instances', 'others'],
+  ['privacy', 'privacy', 'lock'],
+  ['advanced', 'advanced', 'convert'],
+];
+// ---------- reusable component builders (HTML-string helpers) ----------
+function seg(name, cur, opts, wrap) {
+  return `<div class="seg ${wrap ? 'seg-wrap' : ''}" data-seg="${name}">${opts.map(([v, l]) => `<button class="seg-btn ${cur === v ? 'on' : ''}" data-v="${v}">${l}</button>`).join('')}</div>`;
+}
+function toggleRow(id, label, on, desc) {
+  return `<div class="set-row"><div><div class="set-l">${label}</div>${desc ? `<div class="set-d">${desc}</div>` : ''}</div><button class="switch ${on ? 'on' : ''}" id="${id}"><span></span></button></div>`;
+}
+// Select row: label left, native select (enhanced to .cs) on the right. Supports disabled.
+function selectRow(id, label, cur, opts, disabled) {
+  const o = opts.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
+  return `<div class="sel-row ${disabled ? 'dis' : ''}" data-selrow="${id}"><div class="set-l">${label}</div><select id="${id}" ${disabled ? 'disabled' : ''}>${o}</select></div>`;
+}
+// Action button row: list of [id, label, iconName, destructive?]
+function actionRow(buttons) {
+  return `<div class="action-row">${buttons.map(([id, l, ic, danger]) => `<button class="act-btn ${danger ? 'danger' : ''}" id="${id}">${ic ? `<span class="ic">${icon(ic)}</span>` : ''}${l}</button>`).join('')}</div>`;
+}
+// File preview card: list of [filename, secondaryLabel]
+function filePreviewCard(rows) {
+  return `<div class="fpc">${rows.map(([name, sub]) => `<div class="fpc-row"><span class="fpc-ic">${icon('others')}</span><div><div class="fpc-name">${name}</div><div class="fpc-sub">${sub}</div></div></div>`).join('')}</div>`;
+}
+function filenamePreviews(style) {
+  const map = {
+    classic: ['ytdl_a1B2c3D4.mp4', 'ytdl_a1B2c3D4.mp3'],
+    basic: ['Video Title - Video Author.mp4', 'Audio Title - Audio Author.mp3'],
+    pretty: ['Video Title - Video Author (1080p, h264).mp4', 'Audio Title - Audio Author.mp3'],
+    nerdy: ['Video Title - Video Author (1080p, h264, youtube).mp4', 'Audio Title - Audio Author (youtube).mp3'],
+  };
+  const [v, a] = map[style] || map.basic;
+  return filePreviewCard([[v, 'video file preview'], [a, 'audio file preview']]);
+}
+const LANGS = [['english', 'english'], ['spanish', 'spanish'], ['french', 'french'], ['german', 'german'], ['portuguese', 'portuguese'], ['russian', 'russian'], ['japanese', 'japanese'], ['chinese', 'chinese']];
+const SUB_LANGS = [['none', 'none'], ['english', 'english'], ['spanish', 'spanish'], ['french', 'french'], ['german', 'german'], ['japanese', 'japanese'], ['chinese', 'chinese']];
+const DUB_LANGS = [['original', 'original'], ['english', 'english'], ['spanish', 'spanish'], ['french', 'french'], ['german', 'german'], ['japanese', 'japanese']];
+function settingsHtml(cat, s) {
+  if (cat === 'appearance') return `
+    <h3 class="set-h">theme</h3>
+    ${seg('theme', s.theme, [['auto', 'auto'], ['light', 'light'], ['dark', 'dark']])}
+    <p class="set-note">auto theme switches between light and dark themes depending on your device's display mode.</p>
+    <h3 class="set-h">language</h3>
+    ${toggleRow('setLangAuto', 'automatic selection', s.languageAutomatic, 'the app will use your system default language if a translation is available. if not, english will be used instead.')}
+    ${selectRow('setPrefLang', 'preferred language', s.preferredLanguage, LANGS, s.languageAutomatic)}
+    <p class="set-note">this language is used when automatic selection is disabled. any untranslated text is shown in english. some languages use community translations and may be incomplete.</p>`;
+
+  if (cat === 'accessibility') return `
+    <h3 class="set-h">visual</h3>
+    ${toggleRow('setMotion', 'reduce motion', s.reduceMotion, 'animations and transitions will be disabled whenever possible.')}
+    ${toggleRow('setTransp', 'reduce visual transparency', s.reduceTransparency, 'transparency of surfaces is reduced and blur effects are disabled. may also improve UI performance on less powerful devices.')}
+    <h3 class="set-h">behavior</h3>
+    ${toggleRow('setNoQueue', "don't open the queue automatically", s.dontOpenQueueAutomatically, 'the processing queue will not open automatically when a new item is added. progress is still shown and the queue can still be opened manually.')}`;
+
+  if (cat === 'video') return `
+    <h3 class="set-h">video quality</h3>
+    ${seg('videoQuality', s.videoQuality, [['8k+', '8k+'], ['4k', '4k'], ['1440p', '1440p'], ['1080p', '1080p'], ['720p', '720p'], ['480p', '480p'], ['360p', '360p'], ['240p', '240p'], ['144p', '144p']], true)}
+    <p class="set-note">if the preferred video quality is not available, the next best quality is picked instead.</p>
+    <h3 class="set-h">preferred youtube video codec</h3>
+    ${seg('youtubeCodec', s.youtubeCodec, [['h264+aac', 'h264 + aac'], ['av1+opus', 'av1 + opus'], ['vp9+opus', 'vp9 + opus']])}
+    <p class="set-note">h264: best compatibility, average quality, max 1080p. av1: best quality/efficiency, supports 8k and HDR. vp9: same quality as av1 but ~2x bigger; supports 4k and HDR.</p>
+    <h3 class="set-h">youtube file container</h3>
+    ${seg('youtubeContainer', s.youtubeContainer, [['auto', 'auto'], ['mp4', 'mp4'], ['webm', 'webm'], ['mkv', 'mkv']])}
+    <p class="set-note">when auto is selected, the best container is picked from the codec: mp4 for h.264, webm for vp9/av1.</p>
+    <h3 class="set-h">high efficiency video codec</h3>
+    ${toggleRow('setH265', 'allow h.265 for videos', s.allowH265, 'allows downloading videos from platforms like tiktok in higher quality at the cost of compatibility.')}
+    <h3 class="set-h">twitter/x</h3>
+    ${toggleRow('setGif', 'convert looping videos to gif', s.convertLoopingVideosToGif, 'gif conversion is inefficient, so the converted file may be very large and low quality.')}`;
+
+  if (cat === 'audio') return `
+    <h3 class="set-h">audio format</h3>
+    ${seg('audioFormat', s.audioFormat, [['best', 'best'], ['mp3', 'mp3'], ['ogg', 'ogg'], ['wav', 'wav'], ['opus', 'opus']])}
+    <p class="set-note">all formats except best are converted from the source, so some quality loss may occur. when best is selected, audio is kept in its original format whenever possible.</p>
+    <h3 class="set-h">audio bitrate</h3>
+    ${seg('audioBitrate', s.audioBitrate, [['320kb/s', '320kb/s'], ['256kb/s', '256kb/s'], ['128kb/s', '128kb/s'], ['96kb/s', '96kb/s'], ['64kb/s', '64kb/s'], ['8kb/s', '8kb/s']], true)}
+    <p class="set-note">bitrate applies only when converting to a lossy format. the app can't improve source quality, so over 128kbps may grow the file with no audible difference.</p>
+    <h3 class="set-h">youtube audio quality</h3>
+    ${toggleRow('setBetterAudio', 'prefer better quality', s.preferBetterYoutubeAudio, 'the app will try to pick the highest quality audio in audio mode. may not be available depending on youtube and server status.')}
+    <h3 class="set-h">youtube audio track</h3>
+    ${selectRow('setDubLang', 'preferred dub language', s.preferredDubLanguage, DUB_LANGS)}
+    <p class="set-note">a dubbed audio track for the selected language is used if available. if not, the original audio is used.</p>
+    <h3 class="set-h">tiktok</h3>
+    ${toggleRow('setTikTokSound', 'download original sound', s.downloadOriginalTikTokSound, "the app will download the sound from the video without any changes by the post's author.")}`;
+
+  if (cat === 'metadata') return `
+    <h3 class="set-h">filename style</h3>
+    ${seg('filenameStyle', s.filenameStyle, [['classic', 'classic'], ['basic', 'basic'], ['pretty', 'pretty'], ['nerdy', 'nerdy']])}
+    <div id="fpcWrap">${filenamePreviews(s.filenameStyle)}</div>
+    <p class="set-note">filename style is only used for files tunneled through the app. some services only support the classic style.</p>
+    <h3 class="set-h">saving method</h3>
+    ${seg('savingMethod', s.savingMethod, [['ask', 'ask'], ['download', 'download'], ['share', 'share'], ['copy', 'copy']])}
+    <p class="set-note">preferred way of saving the file or link. if the preferred method is unavailable, the app will ask what to do next.</p>
+    <h3 class="set-h">subtitles</h3>
+    ${selectRow('setSubLang', 'preferred subtitle language', s.preferredSubtitleLanguage, SUB_LANGS)}
+    <p class="set-note">subtitles in the preferred language are added if available. some services have no language selection — the only available track is added if any language is selected.</p>
+    <h3 class="set-h">file metadata</h3>
+    ${toggleRow('setNoMeta', 'disable file metadata', s.disableFileMetadata, 'title, artist, and other info will not be added to the file.')}`;
+
+  if (cat === 'local') return `
+    <h3 class="set-h">local media processing</h3>
+    ${seg('localProcessing', s.localProcessing, [['disabled', 'disabled'], ['preferred', 'preferred'], ['forced', 'forced']])}
+    <p class="set-note">when downloading media, remuxing and transcoding are done on-device instead of in the cloud. detailed progress shows in the processing queue.</p>
+    <p class="set-note">disabled: local processing is not used. preferred: media needing extra processing goes through the queue, the rest downloads normally. forced: all media is proxied and downloaded through the queue.</p>
+    <h3 class="set-h">cpu usage limit</h3>
+    <div class="perf-list">${perfRadios(s.performance, s.cores, s.threads)}</div>
+    <p class="set-note">${s.cores} cores detected.</p>
+    <h3 class="set-h">default download location</h3>
+    <div class="perf-list">${dlRadios(s.downloadLocation, s.customDownloadDir)}</div>`;
+
+  if (cat === 'instances') return `
+    <h3 class="set-h">community instances</h3>
+    ${toggleRow('setCustomServer', 'use a custom processing server', s.useCustomProcessingServer, 'the app will use a custom processing instance if you choose to. you are responsible for any instance you use.')}
+    <div class="inst-input ${s.useCustomProcessingServer ? '' : 'hidden'}" id="instUrlWrap"><input type="text" id="instUrl" placeholder="https://instance.example.com/" value="${(s.customProcessingServerUrl || '').replace(/"/g, '&quot;')}"/></div>
+    <p class="set-warn">be mindful of which instances you use — only use ones hosted by people you trust.</p>
+    <h3 class="set-h">instance access key</h3>
+    ${toggleRow('setUseKey', 'use an instance access key', s.useInstanceAccessKey, 'the app will use this key to make requests to the processing instance. make sure the instance supports api keys.')}
+    <div class="inst-input ${s.useInstanceAccessKey ? '' : 'hidden'}" id="instKeyWrap"><input type="text" id="instKey" placeholder="access key" value="${(s.instanceAccessKey || '').replace(/"/g, '&quot;')}"/></div>`;
+
+  if (cat === 'privacy') return `
+    <h3 class="set-h">tunneling</h3>
+    ${toggleRow('setTunnel', 'always tunnel files', s.alwaysTunnelFiles, 'hides your ip address and browser info, and bypasses local network restrictions. files also get readable filenames.')}
+    <h3 class="set-h">anonymous traffic analytics</h3>
+    ${toggleRow('setNoAnalytics', "don't contribute to analytics", s.dontContributeToAnalytics, 'anonymous traffic analytics estimate the approximate number of active users. no identifiable information is ever stored — data is anonymized and aggregated. the system is privacy-friendly, self-hosted, and cookie-free.')}`;
+
+  if (cat === 'advanced') return `
+    <h3 class="set-h">debug</h3>
+    ${toggleRow('setNerd', 'enable features for nerds', s.enableNerdFeatures, 'gives easy access to app info useful for debugging. enabling this does not affect app functionality.')}
+    <div class="set-note">media toolbox v${s.appVersion || (state.caps && state.caps.appVersion) || '1.0.0'}</div>
+    <h3 class="set-h">settings data</h3>
+    ${actionRow([['setImport', 'import', 'download'], ['setExport', 'export', 'folder'], ['setReset', 'reset', 'trash', true]])}
+    <p class="set-note">import, export, or reset all settings back to their default values.</p>
+    <h3 class="set-h">local storage</h3>
+    ${actionRow([['setClearCache', 'clear cache', 'trash', true]])}
+    <p class="set-note">clears locally stored app cache/data. this is a destructive action.</p>`;
+
+  return '';
+}
+// Generic segmented-control wiring → persist patch under given key.
+function wireSeg(name, key, after) {
+  const sg = document.querySelector(`[data-seg="${name}"]`);
+  if (!sg) return;
+  sg.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => {
+    sg.querySelectorAll('.seg-btn').forEach((x) => x.classList.remove('on'));
+    b.classList.add('on');
+    persist({ [key]: b.dataset.v });
+    if (after) after(b.dataset.v);
+  }));
+}
+function wireToggle(id, key, after) {
+  const el = $(id); if (!el) return;
+  el.addEventListener('click', () => { el.classList.toggle('on'); const on = el.classList.contains('on'); persist({ [key]: on }); if (after) after(on); });
+}
+function wireSelect(id, key) {
+  const el = $(id); if (!el) return;
+  el.addEventListener('change', () => persist({ [key]: el.value }));
+}
+// Small confirmation modal helper. Returns a Promise<boolean>.
+function confirmModal(title, body) {
+  return new Promise((resolve) => {
+    $('confirmTitle').textContent = title;
+    $('confirmBody').textContent = body;
+    const modal = $('confirmModal');
+    const ok = $('confirmOk'), cancel = $('confirmCancel');
+    const done = (val) => { modal.classList.add('hidden'); ok.onclick = null; cancel.onclick = null; resolve(val); };
+    ok.onclick = () => done(true);
+    cancel.onclick = () => done(false);
+    modal.classList.remove('hidden');
+  });
+}
+function wireSettingsCat(cat, s) {
+  if (cat === 'appearance') {
+    wireSeg('theme', 'theme');
+    wireToggle('setLangAuto', 'languageAutomatic', (on) => {
+      const row = document.querySelector('[data-selrow="setPrefLang"]'); const sel = $('setPrefLang');
+      if (row) row.classList.toggle('dis', on);
+      if (sel) sel.disabled = on;
+      enhanceSelects($('settingsContent'));
+    });
+    wireSelect('setPrefLang', 'preferredLanguage');
+  } else if (cat === 'accessibility') {
+    wireToggle('setMotion', 'reduceMotion');
+    wireToggle('setTransp', 'reduceTransparency');
+    wireToggle('setNoQueue', 'dontOpenQueueAutomatically');
+  } else if (cat === 'video') {
+    wireSeg('videoQuality', 'videoQuality');
+    wireSeg('youtubeCodec', 'youtubeCodec');
+    wireSeg('youtubeContainer', 'youtubeContainer');
+    wireToggle('setH265', 'allowH265');
+    wireToggle('setGif', 'convertLoopingVideosToGif');
+  } else if (cat === 'audio') {
+    wireSeg('audioFormat', 'audioFormat');
+    wireSeg('audioBitrate', 'audioBitrate');
+    wireToggle('setBetterAudio', 'preferBetterYoutubeAudio');
+    wireSelect('setDubLang', 'preferredDubLanguage');
+    wireToggle('setTikTokSound', 'downloadOriginalTikTokSound');
+  } else if (cat === 'metadata') {
+    wireSeg('filenameStyle', 'filenameStyle', (v) => { const w = $('fpcWrap'); if (w) w.innerHTML = filenamePreviews(v); });
+    wireSeg('savingMethod', 'savingMethod');
+    wireSelect('setSubLang', 'preferredSubtitleLanguage');
+    wireToggle('setNoMeta', 'disableFileMetadata');
+  } else if (cat === 'local') {
+    wireSeg('localProcessing', 'localProcessing');
+    syncPair('perfThreads', 'perfThreadsN');
+    document.querySelectorAll('#settingsContent input[name="perf"]').forEach((r) => r.addEventListener('change', () => { const v = r.value; persist(v === 'custom' ? { performance: 'custom', threads: Number(($('perfThreadsN') || {}).value) || 1 } : { performance: v }); }));
+    const tn = $('perfThreadsN'); if (tn) tn.addEventListener('change', () => { const r = document.querySelector('#settingsContent input[name="perf"][value="custom"]'); if (r) r.checked = true; persist({ performance: 'custom', threads: Number(tn.value) || 1 }); });
+    document.querySelectorAll('#settingsContent input[name="dl"]').forEach((r) => r.addEventListener('change', () => persist({ downloadLocation: r.value })));
+    const pick = $('dlPick'); if (pick) pick.addEventListener('click', async (e) => { e.preventDefault(); const d = await window.api.pickOutputDir(); if (d) { state._customDir = d; $('dlCustomDesc').textContent = d; const r = document.querySelector('#settingsContent input[name="dl"][value="custom"]'); if (r) r.checked = true; persist({ downloadLocation: 'custom', customDownloadDir: d }); } });
+  } else if (cat === 'instances') {
+    wireToggle('setCustomServer', 'useCustomProcessingServer', (on) => { const w = $('instUrlWrap'); if (w) w.classList.toggle('hidden', !on); });
+    const url = $('instUrl'); if (url) url.addEventListener('change', () => persist({ customProcessingServerUrl: url.value }));
+    wireToggle('setUseKey', 'useInstanceAccessKey', (on) => { const w = $('instKeyWrap'); if (w) w.classList.toggle('hidden', !on); });
+    const key = $('instKey'); if (key) key.addEventListener('change', () => persist({ instanceAccessKey: key.value }));
+  } else if (cat === 'privacy') {
+    wireToggle('setTunnel', 'alwaysTunnelFiles');
+    wireToggle('setNoAnalytics', 'dontContributeToAnalytics');
+  } else if (cat === 'advanced') {
+    wireToggle('setNerd', 'enableNerdFeatures');
+    $('setExport').addEventListener('click', async () => { const r = await window.api.exportSettings(); if (r && r.ok) toast('Settings exported', { path: r.filePath }); });
+    $('setImport').addEventListener('click', async () => {
+      const r = await window.api.importSettings();
+      if (r && r.ok && r.settings) { state.settings = r.settings; applyClientSettings(state.settings); toast('Settings imported'); openSettings('advanced'); }
+      else if (r && r.error) toast('Import failed: ' + r.error, { kind: 'error' });
+    });
+    $('setReset').addEventListener('click', async () => {
+      if (!(await confirmModal('Reset all settings?', 'This will restore every setting to its default value.'))) return;
+      state.settings = await window.api.resetSettings();
+      applyClientSettings(state.settings);
+      toast('Settings reset');
+      openSettings('appearance');
+    });
+    $('setClearCache').addEventListener('click', async () => {
+      if (!(await confirmModal('Clear cache?', 'This will remove locally stored cached data.'))) return;
+      await window.api.clearCache();
+      toast('Cache cleared');
+    });
+  }
+  enhanceSelects($('settingsContent'));
+}
+async function openSettings(initial) {
   const s = await window.api.getSettings();
-  $('settingsBody').innerHTML = `<div class="perf-list">${perfRadios(s.performance)}</div>`;
-  $('settingsCores').textContent = `Current cap: ${s.threads === 0 ? 'all cores' : s.threads + ' thread(s)'}`;
+  state._customDir = s.customDownloadDir || '';
+  const cat = initial || 'appearance';
+  $('settingsBody').innerHTML = `<div class="settings-pane">
+    <nav class="settings-nav">${SETTINGS_CATS.map(([id, label, ic]) => `<button class="set-cat ${id === cat ? 'on' : ''}" data-cat="${id}"><span class="ic">${icon(ic)}</span> ${label}</button>`).join('')}</nav>
+    <div class="settings-content" id="settingsContent"></div></div>`;
+  const renderCat = (c) => { $('settingsContent').innerHTML = settingsHtml(c, s); wireSettingsCat(c, s); };
+  $('settingsBody').querySelectorAll('.set-cat').forEach((b) => b.addEventListener('click', () => { $('settingsBody').querySelectorAll('.set-cat').forEach((x) => x.classList.remove('on')); b.classList.add('on'); renderCat(b.dataset.cat); }));
+  renderCat(cat);
+  $('settingsCores').textContent = '';
   $('settingsModal').classList.remove('hidden');
-}
-async function saveSettings() {
-  const sel = document.querySelector('#settingsBody input[name="perf"]:checked');
-  if (sel) { state.settings = await window.api.setSettings({ performance: sel.value }); toast(`Usage limit set to ${sel.value}`); }
-  $('settingsModal').classList.add('hidden');
 }
 async function maybeFirstRun() {
   state.settings = await window.api.getSettings();
+  applyClientSettings(state.settings);
   if (state.settings.firstRun) {
-    $('setupBody').innerHTML = `<div class="perf-list">${perfRadios(state.settings.performance)}</div>`;
+    $('setupBody').innerHTML = `<div class="perf-list">${perfRadios(state.settings.performance, state.settings.cores, state.settings.threads)}</div>`;
+    syncPair('perfThreads', 'perfThreadsN');
     $('setupModal').classList.remove('hidden');
   }
 }
@@ -626,6 +1033,7 @@ function openStretch() {
   $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Stretch Video';
   setHero('Stretch Video', 'Squeeze a video to a new resolution — live preview, then render');
   $('stPreset').innerHTML = STRETCH_PRESETS.map(([l, w, h], i) => `<option value="${i}">${l}</option>`).join('');
+  if ($('stPreset')._csRender) $('stPreset')._csRender();
   $('stretchPanel').classList.remove('hidden');
   applyStretchPreview();
 }
@@ -667,8 +1075,8 @@ const GH_USER = 'pipelinear';
 let profileLoaded = false;
 function openProfile() {
   hideAll(); state.section = 'profile'; state.ws = null;
-  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Profile';
-  setHero('Profile', '');
+  document.body.classList.add('on-profile'); // hides hero, tightens layout
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = '';
   $('profilePanel').classList.remove('hidden');
   $('ghLink').textContent = `github.com/${GH_USER}`;
   startPixelCanvas(); animateSignature();
@@ -701,29 +1109,148 @@ function animateSignature() {
   p.style.transition = 'stroke-dashoffset 1.6s ease'; p.style.strokeDashoffset = '0';
 }
 let pixelRaf = 0;
+const pixelMouse = { x: -9999, y: -9999 };
 function startPixelCanvas() {
   const c = $('pixelCanvas'); if (!c) return;
   const ctxp = c.getContext('2d');
-  const resize = () => { c.width = c.offsetWidth; c.height = c.offsetHeight; };
-  resize();
-  const gap = 16; const mouse = { x: -999, y: -999 };
-  c.onmousemove = (e) => { const r = c.getBoundingClientRect(); mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top; };
-  c.onmouseleave = () => { mouse.x = -999; mouse.y = -999; };
+  const panel = $('profilePanel');
+  const size = () => { c.width = panel.clientWidth; c.height = panel.clientHeight; };
+  // Track the cursor across the WHOLE panel (not just the canvas element).
+  panel.onmousemove = (e) => { const r = c.getBoundingClientRect(); pixelMouse.x = e.clientX - r.left; pixelMouse.y = e.clientY - r.top; };
+  panel.onmouseleave = () => { pixelMouse.x = -9999; pixelMouse.y = -9999; };
+  window.addEventListener('resize', size);
   cancelAnimationFrame(pixelRaf);
+  const gap = 14, radius = 90;
   function draw() {
+    if (c.width !== panel.clientWidth || c.height !== panel.clientHeight) size();
     ctxp.clearRect(0, 0, c.width, c.height);
     for (let y = gap / 2; y < c.height; y += gap) {
       for (let x = gap / 2; x < c.width; x += gap) {
-        const d = Math.hypot(x - mouse.x, y - mouse.y);
-        const on = d < 80;
-        const s = on ? 4 : 2;
-        ctxp.fillStyle = on ? 'rgba(0,0,0,' + (1 - d / 80).toFixed(2) + ')' : '#e5e5e5';
-        ctxp.fillRect(x - s / 2, y - s / 2, s, s);
+        const d = Math.hypot(x - pixelMouse.x, y - pixelMouse.y);
+        if (d < radius) {
+          const t = 1 - d / radius;            // 0..1 falloff
+          const s = 1.5 + t * 3;               // grow toward cursor (smaller, denser)
+          ctxp.fillStyle = `rgba(15,14,18,${(0.12 + t * 0.78).toFixed(2)})`;
+          ctxp.fillRect(x - s / 2, y - s / 2, s, s);
+        } else {
+          ctxp.fillStyle = 'rgba(0,0,0,0.06)'; // faint dots everywhere
+          ctxp.fillRect(x - 1, y - 1, 2, 2);
+        }
       }
     }
     pixelRaf = requestAnimationFrame(draw);
   }
-  draw();
+  // Let layout settle before first size so the canvas fills the panel.
+  requestAnimationFrame(() => { size(); draw(); });
+}
+
+// ---------- audio player (profile) ----------
+// Playlist model — add more tracks here later; the player handles any length.
+const PLAYLIST = [
+  { src: '../songs/song.mp3', title: 'You Are in My System', cover: '../songs/cover.jpg' },
+];
+function wireAudioPlayer() {
+  const a = $('apAudio'); if (!a) return;
+  const fmt = (s) => { s = s || 0; const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, '0')}`; };
+  let current = 0;
+  let fadeRaf = 0;            // in-flight fade handle
+  let endFading = false;      // true while the 3s end-fade is running
+
+  // Reusable volume ramp. Cancels any in-flight fade before starting a new one.
+  function fadeTo(target, ms, done) {
+    cancelAnimationFrame(fadeRaf);
+    const start = a.volume, delta = target - start, t0 = performance.now();
+    if (ms <= 0) { a.volume = Math.max(0, Math.min(1, target)); if (done) done(); return; }
+    function step(now) {
+      const k = Math.min(1, (now - t0) / ms);
+      a.volume = Math.max(0, Math.min(1, start + delta * k));
+      if (k < 1) fadeRaf = requestAnimationFrame(step);
+      else if (done) done();
+    }
+    fadeRaf = requestAnimationFrame(step);
+  }
+
+  // Load a track, paint UI + tint, and (optionally) start playback with a fade-in.
+  function loadTrack(i, autoplay) {
+    current = ((i % PLAYLIST.length) + PLAYLIST.length) % PLAYLIST.length;
+    const tr = PLAYLIST[current];
+    endFading = false;
+    cancelAnimationFrame(fadeRaf);
+    $('apCover').src = tr.cover;
+    $('apTitle').textContent = tr.title;
+    a.src = tr.src;
+    tintFromCover(tr.cover);
+    if (autoplay) {
+      a.volume = 0;                            // reset so a previous end-fade can't leave it muted
+      a.play().then(() => fadeTo(1, 700)).catch(() => {});
+    }
+  }
+
+  // Average the cover's pixels → a heavy white-tinted card bg; flip text to dark ink.
+  function tintFromCover(src) {
+    const card = document.querySelector('.aplayer');
+    const apply = (rgb) => { if (card) card.style.background = rgb; };
+    const fallback = () => apply('#f0f1f3');
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cv = document.createElement('canvas'); cv.width = 16; cv.height = 16;
+        const g = cv.getContext('2d', { willReadFrequently: true });
+        g.drawImage(img, 0, 0, 16, 16);
+        const d = g.getImageData(0, 0, 16, 16).data;
+        let r = 0, gg = 0, b = 0, n = 0;
+        for (let p = 0; p < d.length; p += 4) { r += d[p]; gg += d[p + 1]; b += d[p + 2]; n++; }
+        r /= n; gg /= n; b /= n;
+        const mix = 0.82;                        // ~82% toward white for a whiter card
+        const tr = Math.round(r + (255 - r) * mix), tg = Math.round(gg + (255 - gg) * mix), tb = Math.round(b + (255 - b) * mix);
+        apply(`rgb(${tr}, ${tg}, ${tb})`);
+      } catch { fallback(); }
+    };
+    img.onerror = fallback;
+    img.src = src;
+  }
+
+  const setPlayIcon = () => { $('apPlay').querySelector('.ic').innerHTML = icon(a.paused ? 'play' : 'pause'); };
+
+  $('apPlay').addEventListener('click', () => {
+    if (a.paused) { a.volume = 0; a.play().then(() => fadeTo(1, 700)).catch(() => {}); }
+    else a.pause();
+  });
+  a.addEventListener('play', setPlayIcon); a.addEventListener('pause', setPlayIcon);
+
+  a.addEventListener('ended', () => {
+    if ($('apRepeat').classList.contains('active')) { a.currentTime = 0; a.volume = 0; a.play().then(() => fadeTo(1, 700)).catch(() => {}); }
+    else loadTrack(current + 1, true);           // advance; wraps to 0 at the end
+  });
+
+  a.addEventListener('timeupdate', () => {
+    const p = a.duration ? (a.currentTime / a.duration) * 100 : 0;
+    $('apFill').style.width = p + '%'; $('apCur').textContent = fmt(a.currentTime); $('apDur').textContent = fmt(a.duration);
+    // 3-second end fade (skip when repeat is on — it restarts instead).
+    if (a.duration && !$('apRepeat').classList.contains('active')) {
+      const left = a.duration - a.currentTime;
+      if (left <= 3 && left > 0 && !endFading) { endFading = true; fadeTo(0, left * 1000); }
+    }
+  });
+  a.addEventListener('loadedmetadata', () => { $('apDur').textContent = fmt(a.duration); });
+
+  $('apSlider').addEventListener('click', (e) => {
+    const r = e.currentTarget.getBoundingClientRect(); const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    if (a.duration) { a.currentTime = pct * a.duration; if (endFading && (a.duration - a.currentTime) > 3) { endFading = false; fadeTo(1, 300); } }
+  });
+  $('apShuffle').addEventListener('click', () => $('apShuffle').classList.toggle('active'));
+  $('apRepeat').addEventListener('click', () => $('apRepeat').classList.toggle('active'));
+
+  // Skip = quick fade-out, then load neighbour with a fade-in.
+  $('apPrev').addEventListener('click', () => {
+    const restart = a.currentTime > 3 || PLAYLIST.length === 1;
+    fadeTo(0, 250, () => loadTrack(restart ? current : current - 1, true));
+  });
+  $('apNext').addEventListener('click', () => {
+    fadeTo(0, 250, () => loadTrack(current + 1, true));   // wraps to first track
+  });
+
+  loadTrack(0, false);
 }
 
 // ---------- dither drop effect ----------
@@ -783,10 +1310,12 @@ async function init() {
   $('homeBtn').addEventListener('click', showHome);
   $('profileBtn').addEventListener('click', openProfile);
   $('settingsBtn').addEventListener('click', openSettings);
-  document.querySelectorAll('.home-card').forEach((c) => c.addEventListener('click', () => showSection(c.dataset.section)));
-  wireTitlebar(); wireStretch();
+  document.querySelectorAll('.home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') openMetaEditor(); else if (c.dataset.tool === 'downloader') openSpecial('youtube'); else showSection(c.dataset.section); }));
+  wireTitlebar(); wireStretch(); wireMetaEditor();
   $('settingsClose').addEventListener('click', () => $('settingsModal').classList.add('hidden'));
-  $('settingsSave').addEventListener('click', saveSettings);
+  $('settingsModal').addEventListener('click', (e) => { if (e.target === $('settingsModal')) $('settingsModal').classList.add('hidden'); });
+  $('settingsSave').addEventListener('click', () => $('settingsModal').classList.add('hidden'));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { ['settingsModal', 'modalOverlay'].forEach((id) => $(id).classList.add('hidden')); } });
   $('setupSave').addEventListener('click', finishSetup);
   $('ghLink').addEventListener('click', (e) => { e.preventDefault(); window.api.openExternal(`https://github.com/${GH_USER}`); });
   const rl = $('repoLink'); if (rl) rl.addEventListener('click', (e) => { e.preventDefault(); window.api.openExternal(`https://github.com/${GH_USER}/media-toolbox`); });
@@ -800,8 +1329,38 @@ async function init() {
   $('modalOverlay').addEventListener('click', (e) => { if (e.target === $('modalOverlay')) closeModal(); });
   $('modalApply').addEventListener('click', applyModal);
   $('modalReset').addEventListener('click', () => { const e = findEntry(state.modalJobId); if (e) { const of = e.settings.outputFormat; e.settings = { ...defaultSettingsFor(e.mediaType), ...(state.ws ? state.ws.base : {}) }; e.settings.outputFormat = of; $('modalBody').innerHTML = buildModalBody(e); wireModalBody(e); injectIcons($('modalBody')); } });
-  wireDnd(); wireJobEvents(); wireYoutube(); wireColorPicker(); unitInit(); timeInit();
+  wireDnd(); wireJobEvents(); wireYoutube(); wireColorPicker(); unitInit(); timeInit(); wireAudioPlayer();
+  enhanceSelects(document);
+  // Single-instance "open another?" prompt.
+  window.api.onSecondInstance(() => $('instanceModal').classList.remove('hidden'));
+  $('instCancel').addEventListener('click', () => $('instanceModal').classList.add('hidden'));
+  $('instOpen').addEventListener('click', () => { window.api.newWindow(); $('instanceModal').classList.add('hidden'); });
+  // Update notice.
+  $('unDismiss').addEventListener('click', () => $('updateNotice').classList.add('hidden'));
   showHome();
   maybeFirstRun();
+  loadGithub();
+  checkForUpdate();
+}
+
+// Compare bundled version against the latest GitHub release.
+async function checkForUpdate() {
+  try {
+    const cur = (state.caps && state.caps.appVersion) || '1.0.0';
+    const r = await (await fetch('https://api.github.com/repos/pipelinear/media-toolbox/releases/latest')).json();
+    if (!r || !r.tag_name) return;
+    const latest = String(r.tag_name).replace(/^v/, '');
+    if (cmpVer(latest, cur) > 0) {
+      $('unBody').textContent = `v${latest} is out (you have v${cur}).`;
+      const url = r.html_url || 'https://github.com/pipelinear/media-toolbox/releases/latest';
+      $('unDownload').onclick = () => window.api.openExternal(url);
+      $('updateNotice').classList.remove('hidden');
+    }
+  } catch { /* offline — ignore */ }
+}
+function cmpVer(a, b) {
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
+  return 0;
 }
 init();

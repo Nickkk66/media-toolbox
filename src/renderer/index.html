@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: file:; connect-src 'self' https://github-contributions-api.jogruber.de https://api.github.com;" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: file:; media-src 'self' https: file:; connect-src 'self' https://github-contributions-api.jogruber.de https://api.github.com;" />
     <title>Media Toolbox</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -36,6 +36,8 @@
         <button class="home-card" data-section="convert"><span class="home-ic" data-icon="convert"></span><span class="home-title">Convert</span><span class="home-desc">video · audio · image · gif · pdf</span></button>
         <button class="home-card" data-section="compress"><span class="home-ic" data-icon="compress"></span><span class="home-title">Compress</span><span class="home-desc">shrink any media</span></button>
         <button class="home-card" data-section="tools"><span class="home-ic" data-icon="tools"></span><span class="home-title">Tools</span><span class="home-desc">trim · stretch · merge · youtube</span></button>
+        <button class="home-card" data-tool="metadata"><span class="home-ic" data-icon="metadata"></span><span class="home-title">Metadata Editor</span><span class="home-desc">edit or scrub file metadata</span></button>
+        <button class="home-card" data-tool="downloader"><span class="home-ic" data-icon="download"></span><span class="home-title">Video Downloader</span><span class="home-desc">paste a link · 20+ sites</span></button>
       </section>
 
       <section id="convertMenu" class="accordion hidden"></section>
@@ -92,6 +94,24 @@
         </div>
       </div>
 
+      <!-- Metadata Editor -->
+      <div id="metaPanel" class="panel hidden">
+        <div class="toolbar">
+          <button id="meLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose file</button>
+          <span class="muted" id="meName"></span>
+        </div>
+        <div id="meEmpty" class="dropbox"><div class="dropbox-inner"><p class="dropbox-sub">Choose an audio or video file to read its metadata.<br/>Supported: mp4, mkv, mov, webm, avi · mp3, m4a, flac, ogg, opus, wav</p></div></div>
+        <div id="meBody" class="me-body hidden">
+          <div class="me-fields" id="meFields"></div>
+          <div class="me-actions">
+            <button id="meSave" class="btn primary">Save changes</button>
+            <button id="meScrub" class="btn">Scrub all metadata</button>
+            <button id="meReset" class="btn ghost">Reset to original</button>
+          </div>
+          <div id="meStatus" class="fr-status"></div>
+        </div>
+      </div>
+
       <!-- Color Picker -->
       <div id="colorPanel" class="panel hidden">
         <div class="cp-wrap">
@@ -106,7 +126,12 @@
 
       <!-- YouTube -->
       <div id="ytPanel" class="panel hidden">
-        <div class="yt-input-row"><input id="ytUrl" type="text" placeholder="Paste a YouTube (or other) video URL…" /><button id="ytFetch" class="btn primary">Fetch</button></div>
+        <div class="yt-input-row"><input id="ytUrl" type="text" placeholder="Paste a video link from any supported site…" /><button id="ytFetch" class="btn primary">Fetch</button></div>
+        <div id="ytServices" class="yt-services">
+          <div class="yt-services-head"><span>supported services</span></div>
+          <div id="ytServicesChips" class="yt-chips"></div>
+          <p class="hint">support for a service does not imply affiliation, endorsement, or any form of support other than technical compatibility.</p>
+        </div>
         <div id="ytError" class="yt-error hidden"></div>
         <div id="ytInfo" class="yt-info hidden">
           <img id="ytThumb" class="yt-thumb" alt="" />
@@ -118,6 +143,7 @@
               <label class="field"><span>Format</span><select id="ytSub"></select></label>
               <label class="field" id="ytQualityWrap"><span id="ytQualityLabel">Quality</span><select id="ytQuality"></select></label>
             </div>
+            <label class="check-inline" style="margin:4px 0"><input type="checkbox" id="ytThumb2" /> <span class="hint">also download the thumbnail</span></label>
             <div class="yt-actions"><button id="ytDownload" class="btn primary big">Download <span class="ic" data-icon="download"></span></button><button id="ytCancel" class="btn ghost hidden">Cancel</button></div>
             <div id="ytProgress" class="yt-progress hidden"><div class="bar"><div id="ytBar" class="bar-fill"></div></div><div id="ytStatus" class="fr-status"></div></div>
           </div>
@@ -146,26 +172,59 @@
       <div id="profilePanel" class="panel profile hidden">
         <canvas id="pixelCanvas" class="pixel-canvas"></canvas>
         <div class="profile-inner">
-          <div class="profile-head">
-            <img id="ghAvatar" class="gh-avatar" alt="" />
-            <div>
-              <div class="profile-name" id="ghName">pipelinear</div>
-              <a class="profile-link" id="ghLink" href="#">github.com/pipelinear</a>
-              <a class="profile-link" id="repoLink" href="#" style="display:block">media-toolbox source ↗</a>
+          <div class="profile-main">
+            <div class="profile-head">
+              <img id="ghAvatar" class="gh-avatar" alt="" />
+              <div>
+                <div class="profile-name" id="ghName">pipelinear</div>
+                <a class="profile-link" id="ghLink" href="#">github.com/pipelinear</a>
+                <a class="profile-link" id="repoLink" href="#" style="display:block">media-toolbox source ↗</a>
+              </div>
             </div>
+            <div id="ghStats" class="gh-stats muted"></div>
+            <div id="ghCal" class="gh-cal"></div>
+            <svg id="signature" class="signature" viewBox="0 0 320 90" aria-hidden="true">
+              <path id="sigPath" d="M8 60 C 30 10, 50 80, 70 45 S 110 10, 130 50 C 150 80, 165 20, 185 50 S 230 80, 250 35 C 265 15, 285 55, 312 30"
+                fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+            </svg>
           </div>
-          <div id="ghStats" class="gh-stats muted"></div>
-          <div id="ghCal" class="gh-cal"></div>
-          <svg id="signature" class="signature" viewBox="0 0 320 90" aria-hidden="true">
-            <path id="sigPath" d="M8 60 C 30 10, 50 80, 70 45 S 110 10, 130 50 C 150 80, 165 20, 185 50 S 230 80, 250 35 C 265 15, 285 55, 312 30"
-              fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"/>
-          </svg>
+
+          <div class="aplayer">
+            <div class="ap-cover"><img id="apCover" alt="cover" /></div>
+            <h3 class="ap-title" id="apTitle">NEFFEX &amp; TOKYO MACHINE</h3>
+            <div class="ap-slider" id="apSlider"><div class="ap-fill" id="apFill"></div></div>
+            <div class="ap-times"><span id="apCur">0:00</span><span id="apDur">0:00</span></div>
+            <div class="ap-controls">
+              <button class="ap-btn" id="apShuffle" title="Shuffle"><span class="ic" data-icon="shuffle"></span></button>
+              <button class="ap-btn" id="apPrev" title="Back"><span class="ic" data-icon="skipBack"></span></button>
+              <button class="ap-btn ap-play" id="apPlay" title="Play"><span class="ic" data-icon="play"></span></button>
+              <button class="ap-btn" id="apNext" title="Forward"><span class="ic" data-icon="skipFwd"></span></button>
+              <button class="ap-btn" id="apRepeat" title="Repeat"><span class="ic" data-icon="repeat"></span></button>
+            </div>
+            <audio id="apAudio" preload="none"></audio>
+          </div>
         </div>
       </div>
     </main>
 
     <!-- Toasts -->
     <div id="toasts" class="toasts"></div>
+
+    <!-- Update notice (bottom-left) -->
+    <div id="updateNotice" class="update-notice hidden">
+      <div class="un-title">New version available</div>
+      <div class="un-body" id="unBody"></div>
+      <div class="un-actions"><button id="unDownload" class="btn primary">Download</button><button id="unDismiss" class="btn ghost">Later</button></div>
+    </div>
+
+    <!-- Single-instance prompt -->
+    <div id="instanceModal" class="modal-overlay hidden">
+      <div class="modal" style="max-width:420px">
+        <div class="modal-head"><h2>Already running</h2></div>
+        <div class="modal-body"><p class="hint">You already have an active version of media toolbox running. Open another window anyway?</p></div>
+        <div class="modal-foot"><button id="instCancel" class="btn ghost">No, focus existing</button><button id="instOpen" class="btn primary">Open another</button></div>
+      </div>
+    </div>
 
     <!-- Advanced options modal -->
     <div id="modalOverlay" class="modal-overlay hidden">
@@ -182,7 +241,16 @@
       <div class="modal">
         <div class="modal-head"><h2>Settings</h2><button id="settingsClose" class="modal-x"><span class="ic" data-icon="x"></span></button></div>
         <div class="modal-body" id="settingsBody"></div>
-        <div class="modal-foot"><span class="muted" id="settingsCores"></span><button id="settingsSave" class="btn primary">Save</button></div>
+        <div class="modal-foot"><span class="muted" id="settingsCores"></span><button id="settingsSave" class="btn primary">Done</button></div>
+      </div>
+    </div>
+
+    <!-- Confirmation modal (destructive actions) -->
+    <div id="confirmModal" class="modal-overlay hidden">
+      <div class="modal confirm-modal">
+        <div class="modal-head"><h2 id="confirmTitle">Are you sure?</h2></div>
+        <div class="modal-body"><p class="hint" id="confirmBody"></p></div>
+        <div class="modal-foot"><button id="confirmCancel" class="btn ghost">Cancel</button><button id="confirmOk" class="btn danger">Confirm</button></div>
       </div>
     </div>
 

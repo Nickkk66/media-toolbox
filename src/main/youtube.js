@@ -45,7 +45,7 @@ function info(url) {
 // opts: { url, mode:'video'|'audio', height, audioFormat, audioKbps, outputDir }
 // Returns a controller { promise, cancel }.
 function download(opts, onProgress) {
-  const { url, mode, height, audioFormat, audioKbps, subMode, outputDir } = opts;
+  const { url, mode, height, audioFormat, audioKbps, subMode, thumbnail, outputDir } = opts;
   const outDir = outputDir || process.cwd();
   const outTmpl = path.join(outDir, 'MTB_%(title).180B [%(id)s].%(ext)s');
 
@@ -55,6 +55,8 @@ function download(opts, onProgress) {
     '-o', outTmpl,
     '--print', 'after_move:filepath',
   ];
+  // Also save the thumbnail as a separate image file.
+  if (thumbnail && mode !== 'transcription') args.push('--write-thumbnail');
 
   if (mode === 'transcription') {
     // Download captions / transcript as .srt (manual subs, else auto-generated).

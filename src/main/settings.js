@@ -29,7 +29,43 @@ function limitsFor(level) {
 }
 
 function defaults() {
-  return { firstRun: true, performance: 'recommended', ...limitsFor('recommended') };
+  return {
+    // --- existing / real behavior (KEEP) ---
+    firstRun: true, performance: 'recommended', downloadLocation: 'downloads', customDownloadDir: '',
+    theme: 'auto', reduceMotion: false, reduceTransparency: false,
+    ...limitsFor('recommended'),
+
+    // --- appearance ---
+    languageAutomatic: true, preferredLanguage: 'english',
+
+    // --- accessibility ---
+    dontOpenQueueAutomatically: false,
+
+    // --- video ---
+    videoQuality: '1080p', youtubeCodec: 'h264+aac', youtubeContainer: 'auto',
+    allowH265: false, convertLoopingVideosToGif: true,
+
+    // --- audio ---
+    audioFormat: 'mp3', audioBitrate: '128kb/s', preferBetterYoutubeAudio: false,
+    preferredDubLanguage: 'original', downloadOriginalTikTokSound: false,
+
+    // --- metadata ---
+    filenameStyle: 'basic', savingMethod: 'download', preferredSubtitleLanguage: 'none',
+    disableFileMetadata: false,
+
+    // --- local processing ---
+    localProcessing: 'preferred',
+
+    // --- instances ---
+    useCustomProcessingServer: false, customProcessingServerUrl: '',
+    useInstanceAccessKey: false, instanceAccessKey: '',
+
+    // --- privacy ---
+    alwaysTunnelFiles: false, dontContributeToAnalytics: false,
+
+    // --- advanced ---
+    enableNerdFeatures: false,
+  };
 }
 
 function load() {
@@ -50,4 +86,11 @@ function save(patch) {
   return next;
 }
 
-module.exports = { load, save, limitsFor, cores };
+// Reset every setting to defaults but keep firstRun=false (user is past onboarding).
+function reset() {
+  _cache = { ...defaults(), firstRun: false };
+  try { fs.writeFileSync(file(), JSON.stringify(_cache, null, 2)); } catch { /* */ }
+  return _cache;
+}
+
+module.exports = { load, save, reset, defaults, limitsFor, cores };

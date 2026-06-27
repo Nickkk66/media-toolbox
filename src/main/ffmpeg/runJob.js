@@ -12,6 +12,18 @@ const path = require('path');
 const media = require('../media');
 const ffmpegPath = require('./ffmpegPath');
 
+// Suspend/resume a process tree on Windows via ntdll (NtSuspendProcess /
+// NtResumeProcess) through an inline PowerShell P/Invoke — no native module.
+function suspendResume(pid, action) {
+  if (process.platform !== 'win32' || !pid) return;
+  const fn = action === 'suspend' ? 'NtSuspendProcess' : 'NtResumeProcess';
+  const ps = `$s=@'
+using System;using System.Runtime.InteropServices;using System.Diagnostics;
+public class P{[DllImport("ntdll.dll")]public static extern uint NtSuspendProcess(IntPtr h);[DllImport("ntdll.dll")]public static extern uint NtResumeProcess(IntPtr h);}
+'@;Add-Type $s;try{$p=[Diagnostics.Process]::GetProcessById(${pid});[P]::${fn}($p.Handle)}catch{}`;
+  try { spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true }); } catch { /* ignore */ }
+}
+
 function cleanupPasslogs(prefix) {
   const dir = path.dirname(prefix);
   const base = path.basename(prefix);
@@ -115,8 +127,13 @@ function run(job, attachProgress, callbacks = {}) {
     }
   })();
 
+  let paused = false;
+  function pause() { if (current && current.pid && !paused) { suspendResume(current.pid, 'suspend'); paused = true; } return paused; }
+  function resume() { if (current && current.pid && paused) { suspendResume(current.pid, 'resume'); paused = false; } return !paused; }
+
   function cancel() {
     canceled = true;
+    if (paused && current && current.pid) suspendResume(current.pid, 'resume'); // un-suspend so kill works
     if (current && !current.killed) {
       current.kill();
       if (process.platform === 'win32' && current.pid) {
@@ -127,7 +144,7 @@ function run(job, attachProgress, callbacks = {}) {
     }
   }
 
-  return { jobId, promise, cancel, encoder: built.encoder };
+  return { jobId, promise, cancel, pause, resume, encoder: built.encoder };
 }
 
 module.exports = { run, cleanupPasslogs };
