@@ -789,6 +789,7 @@ async function init() {
   $('settingsSave').addEventListener('click', saveSettings);
   $('setupSave').addEventListener('click', finishSetup);
   $('ghLink').addEventListener('click', (e) => { e.preventDefault(); window.api.openExternal(`https://github.com/${GH_USER}`); });
+  const rl = $('repoLink'); if (rl) rl.addEventListener('click', (e) => { e.preventDefault(); window.api.openExternal(`https://github.com/${GH_USER}/media-toolbox`); });
   $('btnAdd').addEventListener('click', pick);
   $('btnAdd2').addEventListener('click', pick);
   $('btnCompress').addEventListener('click', runActive);
