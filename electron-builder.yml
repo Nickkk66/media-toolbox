@@ -1,0 +1,50 @@
+appId: com.nicky.videocompressor
+productName: Video Compressor
+copyright: Copyright © 2026 Nicky
+
+directories:
+  output: build
+  buildResources: assets
+
+files:
+  - "src/**"
+  - "package.json"
+
+# Bundle ffmpeg/ffprobe so the installer is fully self-contained.
+# These land in <app>/resources/bin and are resolved by ffmpegPath.js.
+extraResources:
+  - from: vendor/bin
+    to: bin
+    filter:
+      - "ffmpeg.exe"
+      - "ffprobe.exe"
+      - "yt-dlp.exe"
+      - "7za.exe"
+  - from: vendor/gs
+    to: gs
+    filter:
+      - "gswin64c.exe"
+      - "gsdll64.dll"
+  - from: vendor/qpdf
+    to: qpdf
+    filter:
+      - "*.exe"
+      - "*.dll"
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: assets/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Video Compressor
+
+portable:
+  artifactName: VideoCompressor-portable-${version}.exe

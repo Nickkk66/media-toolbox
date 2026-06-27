@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: file:; connect-src 'self' https://github-contributions-api.jogruber.de https://api.github.com;" />
+    <title>Media Toolbox</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Custom frameless titlebar -->
+    <div id="titlebar" class="titlebar">
+      <div class="tb-title">media toolbox</div>
+      <div class="tb-controls">
+        <button id="tbMin" class="tb-btn" title="Minimize">&#x2013;</button>
+        <button id="tbMax" class="tb-btn" title="Maximize">&#x25A1;</button>
+        <button id="tbClose" class="tb-btn tb-close" title="Close">&#x2715;</button>
+      </div>
+    </div>
+
+    <header class="appbar">
+      <div class="brand"><span class="logo" id="logoIcon"></span> media toolbox</div>
+      <nav class="mainnav" id="mainnav">
+        <button class="nav-btn" id="homeBtn"><span class="ic" data-icon="home"></span> Home</button>
+        <button class="nav-btn" id="profileBtn"><span class="ic" data-icon="user"></span> Profile</button>
+        <button class="nav-btn" id="settingsBtn"><span class="ic" data-icon="settings"></span> Settings</button>
+      </nav>
+    </header>
+
+    <header class="hero">
+      <h1 id="heroTitle">media toolbox</h1>
+      <p id="heroSub"></p>
+    </header>
+
+    <main>
+      <section id="homeView" class="home-grid hidden">
+        <button class="home-card" data-section="convert"><span class="home-ic" data-icon="convert"></span><span class="home-title">Convert</span><span class="home-desc">video · audio · image · gif · pdf</span></button>
+        <button class="home-card" data-section="compress"><span class="home-ic" data-icon="compress"></span><span class="home-title">Compress</span><span class="home-desc">shrink any media</span></button>
+        <button class="home-card" data-section="tools"><span class="home-ic" data-icon="tools"></span><span class="home-title">Tools</span><span class="home-desc">trim · stretch · merge · youtube</span></button>
+      </section>
+
+      <section id="convertMenu" class="accordion hidden"></section>
+      <section id="compressMenu" class="accordion hidden"></section>
+      <section id="toolsMenu" class="accordion hidden"></section>
+
+      <div id="toolHeader" class="tool-header hidden">
+        <button id="backBtn" class="btn ghost"><span class="ic" data-icon="arrowLeft"></span> Back</button>
+        <span id="toolName" class="tool-name"></span>
+      </div>
+
+      <div id="dropZone" class="panel hidden">
+        <div class="toolbar">
+          <button id="btnAdd" class="btn-add"><span class="ic" data-icon="plus"></span> Add Files</button>
+          <button id="btnOutDir" class="btn-link"><span class="ic" data-icon="folder"></span> Output: <span id="outDirLabel">source folder</span></button>
+        </div>
+        <div id="toolOptions" class="tool-options-bar hidden"></div>
+        <div id="emptyHint" class="dropbox">
+          <canvas id="ditherCanvas" class="dither-canvas"></canvas>
+          <div class="dropbox-inner">
+            <button id="btnAdd2" class="btn primary big"><span class="ic" data-icon="plus"></span> Choose Files</button>
+            <p class="dropbox-sub">or drop files here · <span id="ehSub"></span></p>
+          </div>
+        </div>
+        <div id="fileList" class="file-list"></div>
+        <div id="footer" class="footer hidden">
+          <span id="footerCount" class="footer-count">Added 0 files</span>
+          <div class="footer-actions">
+            <button id="btnCancelAll" class="btn ghost">Cancel</button>
+            <button id="btnCompress" class="btn primary big">Compress Now! <span class="ic" data-icon="arrowRight"></span></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stretch tool -->
+      <div id="stretchPanel" class="panel hidden">
+        <div class="toolbar">
+          <button id="stLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose video</button>
+          <span class="muted" id="stName"></span>
+        </div>
+        <div class="st-wrap">
+          <div class="st-preview"><video id="stVideo" class="st-video" controls muted loop></video></div>
+          <div class="st-side">
+            <label class="field"><span>Preset</span><select id="stPreset"></select></label>
+            <div class="calc-row">
+              <label class="field"><span>Width</span><input id="stW" type="number" value="1080"/></label>
+              <span class="calc-eq">×</span>
+              <label class="field"><span>Height</span><input id="stH" type="number" value="1920"/></label>
+            </div>
+            <p class="hint">Live preview squeezes the video to your target. This changes resolution (stretch), it does not crop.</p>
+            <button id="stRender" class="btn primary big" disabled>Render stretched <span class="ic" data-icon="arrowRight"></span></button>
+            <div id="stProgress" class="yt-progress hidden"><div class="bar"><div id="stBar" class="bar-fill"></div></div><div id="stStatus" class="fr-status"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Color Picker -->
+      <div id="colorPanel" class="panel hidden">
+        <div class="cp-wrap">
+          <div class="cp-left"><button id="cpLoad" class="btn primary">Choose an image</button><canvas id="cpCanvas" class="cp-canvas"></canvas></div>
+          <div class="cp-right">
+            <div id="cpSwatch" class="cp-swatch"></div>
+            <div class="cp-vals"><label class="field"><span>HEX</span><input id="cpHex" type="text" readonly /></label><label class="field"><span>RGB</span><input id="cpRgb" type="text" readonly /></label></div>
+            <p class="muted" style="font-size:12px">Move over the image and click to pick.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- YouTube -->
+      <div id="ytPanel" class="panel hidden">
+        <div class="yt-input-row"><input id="ytUrl" type="text" placeholder="Paste a YouTube (or other) video URL…" /><button id="ytFetch" class="btn primary">Fetch</button></div>
+        <div id="ytError" class="yt-error hidden"></div>
+        <div id="ytInfo" class="yt-info hidden">
+          <img id="ytThumb" class="yt-thumb" alt="" />
+          <div class="yt-meta">
+            <div id="ytTitle" class="yt-title"></div>
+            <div id="ytUploader" class="muted"></div>
+            <div class="yt-options">
+              <label class="field"><span>Type</span><select id="ytMode"><option value="video">Video</option><option value="audio">Audio</option><option value="transcription">Transcription</option></select></label>
+              <label class="field"><span>Format</span><select id="ytSub"></select></label>
+              <label class="field" id="ytQualityWrap"><span id="ytQualityLabel">Quality</span><select id="ytQuality"></select></label>
+            </div>
+            <div class="yt-actions"><button id="ytDownload" class="btn primary big">Download <span class="ic" data-icon="download"></span></button><button id="ytCancel" class="btn ghost hidden">Cancel</button></div>
+            <div id="ytProgress" class="yt-progress hidden"><div class="bar"><div id="ytBar" class="bar-fill"></div></div><div id="ytStatus" class="fr-status"></div></div>
+          </div>
+        </div>
+        <p class="yt-hint muted">Downloads go to your output folder. Only download content you have the rights to.</p>
+      </div>
+
+      <!-- Unit converter -->
+      <div id="unitPanel" class="panel hidden">
+        <div class="calc">
+          <label class="field"><span>Category</span><select id="unitCat"></select></label>
+          <div class="calc-row"><label class="field"><span>From</span><input id="unitFrom" type="number" value="1" /></label><select id="unitFromU"></select><span class="calc-eq">=</span><label class="field"><span>To</span><input id="unitTo" type="text" readonly /></label><select id="unitToU"></select></div>
+        </div>
+      </div>
+
+      <!-- Time converter -->
+      <div id="timePanel" class="panel hidden">
+        <div class="calc">
+          <p class="muted" style="margin-top:0">Convert a date/time between time zones, or to a Unix timestamp.</p>
+          <div class="calc-row"><label class="field"><span>Date &amp; time</span><input id="timeInput" type="datetime-local" /></label><label class="field"><span>From zone</span><select id="timeFrom"></select></label><label class="field"><span>To zone</span><select id="timeTo"></select></label></div>
+          <div id="timeOut" class="time-out"></div>
+        </div>
+      </div>
+
+      <!-- Profile -->
+      <div id="profilePanel" class="panel profile hidden">
+        <canvas id="pixelCanvas" class="pixel-canvas"></canvas>
+        <div class="profile-inner">
+          <div class="profile-head">
+            <img id="ghAvatar" class="gh-avatar" alt="" />
+            <div>
+              <div class="profile-name" id="ghName">pipelinear</div>
+              <a class="profile-link" id="ghLink" href="#">github.com/pipelinear</a>
+            </div>
+          </div>
+          <div id="ghStats" class="gh-stats muted"></div>
+          <div id="ghCal" class="gh-cal"></div>
+          <svg id="signature" class="signature" viewBox="0 0 320 90" aria-hidden="true">
+            <path id="sigPath" d="M8 60 C 30 10, 50 80, 70 45 S 110 10, 130 50 C 150 80, 165 20, 185 50 S 230 80, 250 35 C 265 15, 285 55, 312 30"
+              fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>
+      </div>
+    </main>
+
+    <!-- Toasts -->
+    <div id="toasts" class="toasts"></div>
+
+    <!-- Advanced options modal -->
+    <div id="modalOverlay" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-head"><h2><span class="ic" data-icon="settings"></span> Advanced Options <span class="optional">(Optional)</span></h2><button id="modalClose" class="modal-x"><span class="ic" data-icon="x"></span></button></div>
+        <p class="modal-file">File name: <span id="modalFileName"></span></p>
+        <div id="modalBody" class="modal-body"></div>
+        <div class="modal-foot"><button id="modalReset" class="btn ghost">Reset all options</button><div class="modal-foot-right"><label class="apply-all"><input type="checkbox" id="modalApplyAll" /> Apply to all files</label><button id="modalApply" class="btn primary">Apply Settings</button></div></div>
+      </div>
+    </div>
+
+    <!-- Settings modal -->
+    <div id="settingsModal" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-head"><h2>Settings</h2><button id="settingsClose" class="modal-x"><span class="ic" data-icon="x"></span></button></div>
+        <div class="modal-body" id="settingsBody"></div>
+        <div class="modal-foot"><span class="muted" id="settingsCores"></span><button id="settingsSave" class="btn primary">Save</button></div>
+      </div>
+    </div>
+
+    <!-- First-run setup -->
+    <div id="setupModal" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-head"><h2>Welcome to media toolbox</h2></div>
+        <div class="modal-body">
+          <p class="hint" style="padding-bottom:12px">How hard should the app push your computer? This caps CPU usage so your machine stays responsive. You can change it anytime in Settings.</p>
+          <div id="setupBody"></div>
+        </div>
+        <div class="modal-foot"><span class="muted" id="setupCores"></span><button id="setupSave" class="btn primary">Get started</button></div>
+      </div>
+    </div>
+
+    <script src="converters.js"></script>
+    <script src="app.js"></script>
+    <script src="splash.js"></script>
+  </body>
+</html>

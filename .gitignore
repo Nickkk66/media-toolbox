@@ -1,0 +1,8 @@
+node_modules/
+build/
+vendor/bin/*.exe
+vendor/gs/*.exe
+vendor/gs/*.dll
+vendor/qpdf/*.exe
+vendor/qpdf/*.dll
+*.log

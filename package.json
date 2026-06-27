@@ -1,0 +1,19 @@
+{
+  "name": "video-compressor",
+  "version": "1.0.0",
+  "description": "Local video compressor with no file-size limit. Bundles ffmpeg, runs fully offline.",
+  "author": "Nicky",
+  "license": "MIT",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/",
+    "dist": "electron-builder",
+    "pack": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {}
+}
