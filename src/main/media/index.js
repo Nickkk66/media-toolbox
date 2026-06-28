@@ -13,11 +13,12 @@ const img2pdf = require('./img2pdf');
 const archive = require('./archive');
 const imageop = require('./imageop');
 const videoop = require('./videoop');
+const audioop = require('./audioop');
 const pdfop = require('./pdfop');
 
 // All processable modules (by type). The converter/tool-only modules are
 // invoked explicitly by id, not by drag-detection.
-const MODULES = { video, image, gif, audio, pdf, pdf2img, img2pdf, archive, imageop, videoop, pdfop };
+const MODULES = { video, image, gif, audio, pdf, pdf2img, img2pdf, archive, imageop, videoop, audioop, pdfop };
 
 // Build extension -> type lookup for drag/drop auto-detection (compress tabs).
 // Only the natural media types participate here.

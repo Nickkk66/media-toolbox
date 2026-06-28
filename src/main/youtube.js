@@ -69,8 +69,19 @@ function download(opts, onProgress) {
   } else {
     args.push('--no-simulate');
     const h = Number(height) || 0;
-    const sel = h > 0 ? `bv*[height<=${h}]+ba/b[height<=${h}]` : 'bv*+ba/b';
-    args.push('-f', sel, '--merge-output-format', audioFormat || 'mp4');
+    // Container: default mp4 (broadly compatible). Honor an explicit webm/mkv choice.
+    const container = (audioFormat === 'webm' || audioFormat === 'mkv') ? audioFormat : 'mp4';
+    let sel;
+    if (container === 'mp4') {
+      // Prefer H.264 (avc1) video + AAC (m4a) audio in MP4 so Windows Media Player
+      // (and most players/devices) can play it. AV1/Opus/VP9 are avoided by default.
+      const hc = h > 0 ? `[height<=${h}]` : '';
+      sel = `bv*[vcodec^=avc1]${hc}+ba[acodec^=mp4a]/bv*[ext=mp4]${hc}+ba[ext=m4a]/b[ext=mp4]${hc}/bv*${hc}+ba/b${hc}`;
+    } else {
+      // User explicitly asked for webm/mkv — just respect a height cap if any.
+      sel = h > 0 ? `bv*[height<=${h}]+ba/b[height<=${h}]` : 'bv*+ba/b';
+    }
+    args.push('-f', sel, '--merge-output-format', container);
   }
   args.push(url);
 
@@ -78,6 +89,7 @@ function download(opts, onProgress) {
   let canceled = false;
   let finalPath = '';
   let stderrTail = '';
+  const startedAt = Date.now();
 
   const promise = new Promise((resolve, reject) => {
     proc = spawn(ffmpegPath.ytdlp, args, { windowsHide: true });
@@ -129,6 +141,17 @@ function download(opts, onProgress) {
         if (subMode === 'without' && /\.srt$/i.test(finalPath)) {
           finalPath = stripTimestamps(finalPath);
         }
+      } else if (!finalPath || !fs.existsSync(finalPath)) {
+        // Video/audio: the --print after_move:filepath line wasn't captured.
+        // Fall back to the newest non-thumbnail media file in outDir.
+        try {
+          const cand = fs.readdirSync(outDir)
+            .filter((f) => !/\.(jpg|jpeg|png|webp)$/i.test(f))
+            .map((f) => ({ p: path.join(outDir, f), t: fs.statSync(path.join(outDir, f)).mtimeMs }))
+            .filter((o) => o.t >= startedAt - 1000)
+            .sort((a, b) => b.t - a.t)[0];
+          if (cand) finalPath = cand.p;
+        } catch { /* */ }
       }
       let outSize = 0;
       try { if (finalPath) outSize = fs.statSync(finalPath).size; } catch { /* ignore */ }

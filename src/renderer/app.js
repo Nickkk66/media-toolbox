@@ -9,6 +9,7 @@ const state = {
   outputDir: null,
   modalJobId: null,
   openMenuItem: null, // remember last opened item per section
+  backTo: 'home', // where the Back button should return to
 };
 
 function uid() { return 'j' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
@@ -60,7 +61,7 @@ function customSelect(sel) {
 function enhanceSelects(root) { (root || document).querySelectorAll('select:not([data-cs])').forEach(customSelect); }
 function setHero(title, sub) { $('heroTitle').textContent = title; $('heroSub').textContent = sub; }
 
-const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'profilePanel', 'metaPanel'];
+const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel'];
 function hideAll() {
   PANELS.forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
   document.body.classList.remove('on-profile');
@@ -91,7 +92,7 @@ function spring(from, to, opts, onUpdate, onDone) {
 function bouncyAccordion(container, categories, onItemClick) {
   container.innerHTML = '';
   const rows = [];
-  let activeIdx = 0; // first open by default
+  let activeIdx = -1; // all categories collapsed by default
 
   categories.forEach((cat, idx) => {
     const sec = document.createElement('div');
@@ -152,31 +153,41 @@ function bouncyAccordion(container, categories, onItemClick) {
 
 // ---------- section routing ----------
 function showHome() {
-  state.section = 'home'; state.ws = null;
+  state.section = 'home'; state.ws = null; state.backTo = 'home';
   hideAll();
-  setHero('Media Toolbox', 'Convert, compress and edit media — all on your machine');
+  setHero('Media Toolbox', 'Your local media workshop');
   $('homeView').classList.remove('hidden');
 }
 function showSection(section) {
   state.section = section;
   state.ws = null;
+  // The menu root: Back goes HOME.
+  state.backTo = 'home';
   hideAll();
+  const labels = { convert: 'Convert', compress: 'Compress', tools: 'Tools' };
   if (section === 'convert') { setHero('Convert', 'Pick a converter'); $('convertMenu').classList.remove('hidden'); bouncyAccordion($('convertMenu'), window.CONVERT_CATEGORIES, (it) => openItem(it, 'convert')); }
   else if (section === 'compress') { setHero('Compress', 'Pick a compressor'); $('compressMenu').classList.remove('hidden'); bouncyAccordion($('compressMenu'), window.COMPRESS_CATEGORIES, (it) => openItem(it, 'compress')); }
   else if (section === 'tools') { setHero('Tools', 'Pick a tool'); $('toolsMenu').classList.remove('hidden'); bouncyAccordion($('toolsMenu'), window.TOOL_CATEGORIES, (it) => openItem(it, 'tool')); }
+  // Reveal the Back button on menu screens too.
+  $('toolHeader').classList.remove('hidden');
+  $('toolName').textContent = labels[section] || '';
 }
 
 function backToMenu() {
-  if (['convert', 'compress', 'tools'].includes(state.section)) showSection(state.section);
-  else showHome();
+  if (state.backTo === 'home') showHome();
+  else showSection(state.backTo);
 }
 
 // ---------- open an item ----------
 function openItem(item, kind) {
+  // Opened from a menu → Back returns to that menu (kind 'tool' maps to 'tools').
+  state.backTo = kind === 'tool' ? 'tools' : (kind || 'home');
   if (item.engine === 'special') return openSpecial(item.id);
   if (item.engine === 'colorpicker') return openColorPicker();
   if (item.engine === 'stretch') return openStretch();
   if (item.engine === 'metaedit') return openMetaEditor();
+  if (item.engine === 'batchrename') return openBatchRename();
+  if (item.engine === 'photofx') return openPhotoEffects();
   hideAll();
   $('toolHeader').classList.remove('hidden');
   $('toolName').textContent = item.label;
@@ -202,6 +213,836 @@ function openItem(item, kind) {
   renderList();
 }
 
+// ---------- Batch Rename ----------
+// Self-contained tool: pick files, build new names from a base + sequential
+// numbering and/or find→replace, preview, then rename on disk via IPC.
+const batchState = { files: [], wired: false };
+function openBatchRename() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Batch Rename';
+  setHero('Batch Rename', 'Bulk-rename files with numbering and find → replace');
+  $('batchPanel').classList.remove('hidden');
+  if (!batchState.wired) { wireBatchRename(); batchState.wired = true; }
+  renderBatchPreview();
+}
+function batchNewName(path, idx) {
+  const dot = path.lastIndexOf('.');
+  const slash = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
+  const ext = dot > slash ? path.slice(dot) : '';
+  let stem = dot > slash ? path.slice(slash + 1, dot) : path.slice(slash + 1);
+  const find = $('brFind').value;
+  if (find) stem = stem.split(find).join($('brReplace').value);
+  const base = $('brBase').value.trim();
+  if (base) {
+    const start = Number($('brStart').value) || 1;
+    const pad = Math.max(1, Number($('brPad').value) || 3);
+    const num = String(start + idx).padStart(pad, '0');
+    stem = `${base}_${num}`;
+  }
+  return stem + ext;
+}
+function renderBatchPreview() {
+  const box = $('brList');
+  if (!batchState.files.length) { box.innerHTML = '<div class="muted" style="padding:12px 0">No files chosen yet.</div>'; $('brRun').disabled = true; return; }
+  $('brRun').disabled = false;
+  box.innerHTML = batchState.files.map((p, i) => {
+    const cur = baseName(p);
+    const nn = batchNewName(p, i);
+    return `<div class="br-row"><span class="br-old">${mtbEsc(cur)}</span><span class="br-arr">${icon('arrowRight')}</span><span class="br-new">${mtbEsc(nn)}</span></div>`;
+  }).join('');
+}
+function wireBatchRename() {
+  $('brLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
+    batchState.files = paths; renderBatchPreview();
+  });
+  $('brClear').addEventListener('click', () => { batchState.files = []; renderBatchPreview(); });
+  ['brBase', 'brStart', 'brPad', 'brFind', 'brReplace'].forEach((id) => $(id).addEventListener('input', renderBatchPreview));
+  $('brRun').addEventListener('click', async () => {
+    if (!batchState.files.length) return;
+    const renames = batchState.files.map((p, i) => ({ from: p, to: batchNewName(p, i) }));
+    $('brStatus').textContent = 'Renaming…'; $('brStatus').className = 'fr-status';
+    try {
+      const res = await window.api.filesRename(renames);
+      const ok = res.results.filter((r) => r.ok).length;
+      const failed = res.results.filter((r) => !r.ok);
+      $('brStatus').textContent = `Renamed ${ok}/${res.results.length}` + (failed.length ? ` · ${failed.length} skipped (${failed.map((f) => f.error).filter((v, i, a) => a.indexOf(v) === i).join(', ')})` : '');
+      $('brStatus').className = failed.length ? 'fr-status error' : 'fr-status done';
+      // Point file list at the new paths so a second rename pass chains naturally.
+      batchState.files = res.results.map((r) => r.ok ? r.to : r.from);
+      renderBatchPreview();
+      toast(`Renamed ${ok} file${ok === 1 ? '' : 's'}`, ok ? {} : { kind: 'error' });
+    } catch (e) { $('brStatus').textContent = 'Error: ' + (e.message || e); $('brStatus').className = 'fr-status error'; }
+  });
+}
+
+// ---------- Photo Effects ----------
+// Self-contained image effects lab ported from shaderlab.html: a stackable
+// canvas pipeline (dither / ascii / halftone / glitch / crt / …) restyled to the
+// app's look. Lazy-wired on first open like Batch Rename; exports PNG via <a download>.
+const FX_PALETTE_PRESETS = [
+  { name: 'mono', colors: ['#000000', '#ffffff'] },
+  { name: 'game boy', colors: ['#0f380f', '#306230', '#8bac0f', '#9bbc0f'] },
+  { name: 'pocket', colors: ['#2d2d2d', '#656555', '#a9a987', '#e8e8c0'] },
+  { name: 'cga', colors: ['#000000', '#55ffff', '#ff55ff', '#ffffff'] },
+  { name: 'paper', colors: ['#1a1a1a', '#8a8577', '#e8e4d8', '#f4f0e4'] },
+  { name: 'cyan', colors: ['#001a2c', '#005577', '#00ccff', '#ffffff'] },
+  { name: 'amber', colors: ['#1a0a00', '#663300', '#ffaa00', '#ffeecc'] },
+  { name: 'acid', colors: ['#000000', '#00ff00', '#ffff00', '#ffffff'] },
+  { name: 'sunset', colors: ['#2d0036', '#6e1423', '#e25822', '#f9a03f', '#ffeebc'] },
+  { name: 'aqua', colors: ['#001219', '#005f73', '#0a9396', '#94d2bd', '#e9d8a6'] },
+  { name: 'neon', colors: ['#14002c', '#7400b8', '#ff006e', '#ffbe0b'] },
+];
+
+const FX_ASCII_CHARSETS = {
+  standard: ' .:-=+*#%@',
+  blocks: ' ░▒▓█',
+  dots: ' .·•○●',
+  binary: ' 01',
+  dense: " .'^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$",
+  minimal: ' .#',
+};
+
+// Each def: name (shown in stack), defaults, and params(p) → array of control descriptors.
+// Control kinds: range {key,label,min,max,step}, select {key,label,opts:[[val,text]]},
+// toggle {key,label}, seg {key,label,opts:[[val,text]]}.
+const FX_EFFECT_DEFS = {
+  dither: {
+    name: 'dither',
+    defaults: { algorithm: 'floyd', scale: 1, strength: 1.0 },
+    params: () => [
+      { kind: 'select', key: 'algorithm', label: 'Algorithm', opts: [['floyd', 'floyd-steinberg'], ['atkinson', 'atkinson'], ['bayer4', 'bayer 4×4'], ['bayer8', 'bayer 8×8'], ['bayer16', 'bayer 16×16'], ['random', 'random noise'], ['sierra', 'sierra lite'], ['jarvis', 'jarvis'], ['burkes', 'burkes'], ['stucki', 'stucki']] },
+      { kind: 'range', key: 'scale', label: 'Pixel scale', min: 1, max: 10, step: 1, unit: '×' },
+      { kind: 'range', key: 'strength', label: 'Strength', min: 0, max: 1, step: 0.01, pct: true },
+    ],
+  },
+  ascii: {
+    name: 'ascii',
+    defaults: { density: 100, charset: 'standard', invertBright: false, colored: true, textMode: false, bold: true },
+    params: () => [
+      { kind: 'select', key: 'charset', label: 'Character set', opts: Object.keys(FX_ASCII_CHARSETS).map((k) => [k, k]) },
+      { kind: 'range', key: 'density', label: 'Density (cols)', min: 30, max: 220, step: 1 },
+      { kind: 'seg', key: 'textMode', label: 'Output', opts: [[false, 'canvas'], [true, 'text']] },
+      { kind: 'toggle', key: 'colored', label: 'Use palette colors' },
+      { kind: 'toggle', key: 'invertBright', label: 'Invert brightness' },
+      { kind: 'toggle', key: 'bold', label: 'Bold characters' },
+    ],
+  },
+  halftone: {
+    name: 'halftone',
+    defaults: { dotSize: 8, angle: 15, shape: 'circle', cmyk: false, spacing: 1.0, contrast: 1.0 },
+    params: () => [
+      { kind: 'range', key: 'dotSize', label: 'Dot cell size', min: 3, max: 30, step: 1, unit: 'px' },
+      { kind: 'range', key: 'spacing', label: 'Dot spacing', min: 0.7, max: 2.5, step: 0.05, unit: '×' },
+      { kind: 'range', key: 'angle', label: 'Rotation', min: 0, max: 90, step: 1, unit: '°' },
+      { kind: 'range', key: 'contrast', label: 'Contrast', min: 0.2, max: 3, step: 0.05, unit: '×' },
+      { kind: 'select', key: 'shape', label: 'Shape', opts: [['circle', 'circle'], ['square', 'square'], ['diamond', 'diamond'], ['line', 'line'], ['cross', 'cross'], ['hex', 'hexagon']] },
+      { kind: 'toggle', key: 'cmyk', label: 'CMYK separation' },
+    ],
+  },
+  posterize: {
+    name: 'posterize',
+    defaults: { levels: 3, usePalette: true },
+    params: () => [
+      { kind: 'range', key: 'levels', label: 'Levels', min: 2, max: 8, step: 1 },
+      { kind: 'toggle', key: 'usePalette', label: 'Snap to palette' },
+    ],
+  },
+  pixel: {
+    name: 'pixelate',
+    defaults: { size: 8, usePalette: false },
+    params: () => [
+      { kind: 'range', key: 'size', label: 'Pixel size', min: 2, max: 50, step: 1, unit: 'px' },
+      { kind: 'toggle', key: 'usePalette', label: 'Snap to palette' },
+    ],
+  },
+  threshold: {
+    name: 'threshold',
+    defaults: { level: 128, smooth: 0 },
+    params: () => [
+      { kind: 'range', key: 'level', label: 'Threshold', min: 0, max: 255, step: 1 },
+      { kind: 'range', key: 'smooth', label: 'Softness', min: 0, max: 100, step: 1 },
+    ],
+  },
+  rgbshift: {
+    name: 'rgb shift',
+    defaults: { amount: 8, angle: 0 },
+    params: () => [
+      { kind: 'range', key: 'amount', label: 'Amount', min: 0, max: 40, step: 1, unit: 'px' },
+      { kind: 'range', key: 'angle', label: 'Angle', min: 0, max: 360, step: 1, unit: '°' },
+    ],
+  },
+  scanglitch: {
+    name: 'scan glitch',
+    defaults: { intensity: 30, frequency: 8, seed: 7 },
+    params: () => [
+      { kind: 'range', key: 'intensity', label: 'Intensity', min: 0, max: 100, step: 1 },
+      { kind: 'range', key: 'frequency', label: 'Frequency', min: 1, max: 30, step: 1 },
+      { kind: 'range', key: 'seed', label: 'Seed', min: 1, max: 99, step: 1 },
+    ],
+  },
+  slice: {
+    name: 'slice displace',
+    defaults: { slices: 20, maxOffset: 30, seed: 7 },
+    params: () => [
+      { kind: 'range', key: 'slices', label: 'Slice count', min: 2, max: 80, step: 1 },
+      { kind: 'range', key: 'maxOffset', label: 'Max offset', min: 0, max: 120, step: 1, unit: 'px' },
+      { kind: 'range', key: 'seed', label: 'Seed', min: 1, max: 99, step: 1 },
+    ],
+  },
+  grain: {
+    name: 'film grain',
+    defaults: { amount: 20, size: 1, mono: true },
+    params: () => [
+      { kind: 'range', key: 'amount', label: 'Amount', min: 0, max: 100, step: 1 },
+      { kind: 'range', key: 'size', label: 'Size', min: 1, max: 5, step: 1, unit: 'px' },
+      { kind: 'toggle', key: 'mono', label: 'Monochrome' },
+    ],
+  },
+  crt: {
+    name: 'crt',
+    defaults: { scanlines: 4, stripes: true, vignette: 0.4 },
+    params: () => [
+      { kind: 'range', key: 'scanlines', label: 'Scanline spacing', min: 2, max: 12, step: 1, unit: 'px' },
+      { kind: 'range', key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.01, pct: true },
+      { kind: 'toggle', key: 'stripes', label: 'RGB subpixels' },
+    ],
+  },
+  vignette: {
+    name: 'vignette',
+    defaults: { amount: 0.6, softness: 0.5 },
+    params: () => [
+      { kind: 'range', key: 'amount', label: 'Darkness', min: 0, max: 1, step: 0.01, pct: true },
+      { kind: 'range', key: 'softness', label: 'Softness', min: 0, max: 1, step: 0.01, pct: true },
+    ],
+  },
+  chromatic: {
+    name: 'chromatic',
+    defaults: { amount: 5, radial: true },
+    params: () => [
+      { kind: 'range', key: 'amount', label: 'Amount', min: 0, max: 30, step: 1, unit: 'px' },
+      { kind: 'toggle', key: 'radial', label: 'Radial (from center)' },
+    ],
+  },
+  glow: {
+    name: 'bloom / glow',
+    defaults: { threshold: 180, amount: 0.6, radius: 10 },
+    params: () => [
+      { kind: 'range', key: 'threshold', label: 'Threshold', min: 0, max: 255, step: 1 },
+      { kind: 'range', key: 'radius', label: 'Radius', min: 1, max: 40, step: 1, unit: 'px' },
+      { kind: 'range', key: 'amount', label: 'Strength', min: 0, max: 2, step: 0.01, pct: true },
+    ],
+  },
+  blur: {
+    name: 'blur',
+    defaults: { radius: 4 },
+    params: () => [{ kind: 'range', key: 'radius', label: 'Radius', min: 0, max: 30, step: 1, unit: 'px' }],
+  },
+  edge: {
+    name: 'edge detect',
+    defaults: { strength: 1.0, invert: false },
+    params: () => [
+      { kind: 'range', key: 'strength', label: 'Strength', min: 0.1, max: 3, step: 0.05 },
+      { kind: 'toggle', key: 'invert', label: 'Invert (dark edges)' },
+    ],
+  },
+  emboss: {
+    name: 'emboss',
+    defaults: { strength: 1.0 },
+    params: () => [{ kind: 'range', key: 'strength', label: 'Strength', min: 0.1, max: 3, step: 0.05 }],
+  },
+};
+
+const FX_PRESET_STACKS = [
+  { name: 'mac classic', stack: [{ type: 'dither', params: { algorithm: 'atkinson', scale: 2, strength: 1 } }] },
+  { name: 'newspaper', stack: [{ type: 'halftone', params: { dotSize: 6, angle: 15, shape: 'circle', spacing: 1, contrast: 1.2 } }] },
+  { name: 'game boy', stack: [{ type: 'pixel', params: { size: 4, usePalette: true } }, { type: 'dither', params: { algorithm: 'bayer4', scale: 1, strength: 1 } }], palette: 'game boy' },
+  { name: 'vhs horror', stack: [{ type: 'chromatic', params: { amount: 4, radial: true } }, { type: 'scanglitch', params: { intensity: 25, frequency: 10 } }, { type: 'crt', params: { scanlines: 3, stripes: true, vignette: 0.5 } }] },
+  { name: 'ascii art', stack: [{ type: 'ascii', params: { density: 120, charset: 'dense', colored: true, bold: true } }] },
+  { name: 'glitched', stack: [{ type: 'rgbshift', params: { amount: 6, angle: 45 } }, { type: 'slice', params: { slices: 15, maxOffset: 20 } }] },
+  { name: 'oil painting', stack: [{ type: 'posterize', params: { levels: 5, usePalette: false } }, { type: 'edge', params: { strength: 0.5, invert: true } }, { type: 'blur', params: { radius: 2 } }] },
+  { name: 'dream soft', stack: [{ type: 'glow', params: { threshold: 150, amount: 0.8, radius: 15 } }, { type: 'chromatic', params: { amount: 3, radial: true } }, { type: 'vignette', params: { amount: 0.4, softness: 0.7 } }] },
+];
+
+const fxState = {
+  wired: false,
+  source: null,            // HTMLImageElement
+  effects: [],
+  selectedId: null,
+  nextId: 1,
+  palette: ['#1a1a1a', '#888888', '#f4f0e4'],
+  brightness: 0, contrast: 0, saturation: 0, invert: false, grayscale: false,
+  lastAsciiText: '',
+  isAsciiText: false,
+};
+let fxCanvas = null, fxCtx = null, fxWork = null, fxWorkCtx = null;
+
+function fxHexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return [parseInt(h.substring(0, 2), 16), parseInt(h.substring(2, 4), 16), parseInt(h.substring(4, 6), 16)];
+}
+function fxActivePalette() { return fxState.palette.map(fxHexToRgb); }
+function fxClosest(r, g, b, pal) {
+  let best = pal[0], bd = Infinity;
+  for (const c of pal) { const dr = r - c[0], dg = g - c[1], db = b - c[2]; const d = dr * dr + dg * dg + db * db; if (d < bd) { bd = d; best = c; } }
+  return best;
+}
+
+function openPhotoEffects() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Photo Effects';
+  setHero('Photo Effects', 'Stackable image effects — dither, ascii, halftone, glitch & more');
+  $('fxPanel').classList.remove('hidden');
+  if (!fxState.wired) { wirePhotoEffects(); fxState.wired = true; }
+  fxRenderStack(); fxRenderParams();
+}
+
+function wirePhotoEffects() {
+  fxCanvas = $('fxCanvas'); fxCtx = fxCanvas.getContext('2d', { willReadFrequently: true });
+  fxWork = document.createElement('canvas'); fxWorkCtx = fxWork.getContext('2d', { willReadFrequently: true });
+
+  // Populate preset + palette selects, then enhance them into custom dropdowns.
+  $('fxPreset').innerHTML = '<option value="">Choose a preset stack…</option>' + FX_PRESET_STACKS.map((p, i) => `<option value="${i}">${mtbEsc(p.name)}</option>`).join('');
+  $('fxPalPreset').innerHTML = '<option value="">Palette preset…</option>' + FX_PALETTE_PRESETS.map((p, i) => `<option value="${i}">${mtbEsc(p.name)}</option>`).join('');
+  enhanceSelects($('fxPanel'));
+  fxBuildSwatches();
+
+  $('fxLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
+    fxLoadImagePath(paths[0]);
+  });
+  $('fxDemo').addEventListener('click', () => fxLoadDemo());
+  $('fxClear').addEventListener('click', () => { fxState.effects = []; fxState.selectedId = null; fxRenderStack(); fxRenderParams(); fxRender(); });
+
+  $('fxAddBtn').addEventListener('click', () => {
+    const sel = $('fxAdd'); const type = sel.value; if (!type) return;
+    const def = FX_EFFECT_DEFS[type];
+    const fx = { id: fxState.nextId++, type, enabled: true, params: JSON.parse(JSON.stringify(def.defaults)) };
+    fxState.effects.push(fx); fxState.selectedId = fx.id;
+    sel.value = ''; if (sel._csRender) sel._csRender();
+    fxRenderStack(); fxRenderParams(); fxRender();
+  });
+
+  $('fxPreset').addEventListener('change', (e) => {
+    const idx = e.target.value; if (idx === '') return;
+    const preset = FX_PRESET_STACKS[Number(idx)];
+    fxState.effects = preset.stack.map((s) => ({ id: fxState.nextId++, type: s.type, enabled: true, params: { ...FX_EFFECT_DEFS[s.type].defaults, ...s.params } }));
+    fxState.selectedId = fxState.effects[0] ? fxState.effects[0].id : null;
+    if (preset.palette) { const pp = FX_PALETTE_PRESETS.find((p) => p.name === preset.palette); if (pp) { fxState.palette = [...pp.colors]; fxBuildSwatches(); } }
+    e.target.value = ''; if (e.target._csRender) e.target._csRender();
+    fxRenderStack(); fxRenderParams(); fxRender();
+  });
+
+  $('fxPalPreset').addEventListener('change', (e) => {
+    const idx = e.target.value; if (idx === '') return;
+    fxState.palette = [...FX_PALETTE_PRESETS[Number(idx)].colors];
+    e.target.value = ''; if (e.target._csRender) e.target._csRender();
+    fxBuildSwatches(); fxRender();
+  });
+
+  ['brightness', 'contrast', 'saturation'].forEach((k) => {
+    const id = 'fx' + k.charAt(0).toUpperCase() + k.slice(1);
+    $(id).addEventListener('input', (e) => { fxState[k] = parseInt(e.target.value, 10); $(id + 'Val').textContent = fxState[k]; fxRender(); });
+  });
+  $('fxInvert').addEventListener('change', (e) => { fxState.invert = e.target.checked; fxRender(); });
+  $('fxGrayscale').addEventListener('change', (e) => { fxState.grayscale = e.target.checked; fxRender(); });
+
+  $('fxCopyAscii').addEventListener('click', () => {
+    navigator.clipboard.writeText(fxState.lastAsciiText || '');
+    $('fxStatus').textContent = 'ASCII copied';
+  });
+  $('fxSave').addEventListener('click', fxSave);
+}
+
+function fxLoadImagePath(path) {
+  const img = new Image();
+  img.onload = () => {
+    fxState.source = img;
+    $('fxName').textContent = baseName(path);
+    $('fxHint').classList.add('hidden');
+    $('fxSave').disabled = false;
+    fxRender();
+  };
+  img.src = 'file:///' + String(path).replace(/\\/g, '/');
+}
+
+function fxLoadDemo() {
+  const c = document.createElement('canvas'); c.width = 640; c.height = 480;
+  const d = c.getContext('2d');
+  const grad = d.createLinearGradient(0, 0, 0, 480);
+  grad.addColorStop(0, '#1a3a5c'); grad.addColorStop(0.5, '#d4846b'); grad.addColorStop(1, '#f4c869');
+  d.fillStyle = grad; d.fillRect(0, 0, 640, 480);
+  const sun = d.createRadialGradient(480, 180, 10, 480, 180, 100);
+  sun.addColorStop(0, '#ffeecc'); sun.addColorStop(1, 'rgba(255,220,150,0)');
+  d.fillStyle = sun; d.fillRect(0, 0, 640, 480);
+  d.fillStyle = '#2a2a4a'; d.beginPath(); d.moveTo(0, 320);
+  for (let x = 0; x <= 640; x += 20) d.lineTo(x, 320 + Math.sin(x * 0.03) * 40 + Math.sin(x * 0.1) * 15);
+  d.lineTo(640, 480); d.lineTo(0, 480); d.closePath(); d.fill();
+  d.fillStyle = '#ffffff';
+  for (let i = 0; i < 40; i++) { d.beginPath(); d.arc(Math.random() * 640, Math.random() * 200, Math.random() * 1.5 + 0.5, 0, Math.PI * 2); d.fill(); }
+  const img = new Image();
+  img.onload = () => { fxState.source = img; $('fxName').textContent = 'demo image'; $('fxHint').classList.add('hidden'); $('fxSave').disabled = false; fxRender(); };
+  img.src = c.toDataURL();
+}
+
+function fxBuildSwatches() {
+  const wrap = $('fxSwatches'); wrap.innerHTML = '';
+  fxState.palette.forEach((color, i) => {
+    const inp = document.createElement('input');
+    inp.type = 'color'; inp.value = color; inp.className = 'fx-swatch';
+    inp.addEventListener('input', (e) => { fxState.palette[i] = e.target.value; fxRender(); });
+    wrap.appendChild(inp);
+  });
+  // size controls: 2..6 colors
+  const ctl = document.createElement('div'); ctl.className = 'fx-pal-size';
+  [2, 3, 4, 5, 6].forEach((n) => {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = n === 2 ? '1-bit' : String(n);
+    b.className = 'fx-seg-btn' + (fxState.palette.length === n ? ' on' : '');
+    b.addEventListener('click', () => {
+      const cur = fxState.palette.slice();
+      const next = [];
+      for (let i = 0; i < n; i++) next.push(cur[i] || '#888888');
+      fxState.palette = next; fxBuildSwatches(); fxRender();
+    });
+    ctl.appendChild(b);
+  });
+  wrap.appendChild(ctl);
+}
+
+function fxRenderStack() {
+  const wrap = $('fxStack'); wrap.innerHTML = '';
+  if (!fxState.effects.length) { wrap.innerHTML = '<p class="hint">No effects — add one below.</p>'; return; }
+  fxState.effects.forEach((fx, idx) => {
+    const def = FX_EFFECT_DEFS[fx.type]; if (!def) return;
+    const item = document.createElement('div');
+    item.className = 'fx-stack-item' + (fx.id === fxState.selectedId ? ' selected' : '') + (fx.enabled ? '' : ' disabled');
+    item.innerHTML = `<span class="fx-stack-name">${mtbEsc(def.name)}</span>
+      <span class="fx-stack-actions">
+        <button data-act="toggle" title="${fx.enabled ? 'disable' : 'enable'}">${fx.enabled ? '●' : '○'}</button>
+        <button data-act="up" title="move up">▲</button>
+        <button data-act="down" title="move down">▼</button>
+        <button data-act="remove" title="remove">✕</button>
+      </span>`;
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('[data-act]')) return;
+      fxState.selectedId = fx.id; fxRenderStack(); fxRenderParams();
+    });
+    item.querySelectorAll('[data-act]').forEach((btn) => btn.addEventListener('click', (e) => {
+      e.stopPropagation(); const a = btn.dataset.act;
+      if (a === 'toggle') fx.enabled = !fx.enabled;
+      else if (a === 'up' && idx > 0) { const t = fxState.effects[idx - 1]; fxState.effects[idx - 1] = fxState.effects[idx]; fxState.effects[idx] = t; }
+      else if (a === 'down' && idx < fxState.effects.length - 1) { const t = fxState.effects[idx + 1]; fxState.effects[idx + 1] = fxState.effects[idx]; fxState.effects[idx] = t; }
+      else if (a === 'remove') { fxState.effects.splice(idx, 1); if (fxState.selectedId === fx.id) fxState.selectedId = null; }
+      fxRenderStack(); fxRenderParams(); fxRender();
+    }));
+    wrap.appendChild(item);
+  });
+}
+
+function fxRenderParams() {
+  const wrap = $('fxParams');
+  const fx = fxState.effects.find((f) => f.id === fxState.selectedId);
+  if (!fx) { wrap.innerHTML = '<p class="hint">Select an effect to edit its parameters.</p>'; return; }
+  const def = FX_EFFECT_DEFS[fx.type];
+  const ctrls = def.params(fx.params);
+  wrap.innerHTML = ctrls.map((c) => fxControlHtml(c, fx.params[c.key])).join('');
+  enhanceSelects(wrap);
+  fxAttachParamListeners(wrap, fx);
+}
+
+function fxFmtVal(c, v) {
+  if (c.pct) return Math.round(v * 100) + '%';
+  if (c.unit) return v + c.unit;
+  return String(v);
+}
+function fxControlHtml(c, v) {
+  if (c.kind === 'range') {
+    return `<label class="fx-field"><span>${mtbEsc(c.label)} <b data-valfor="${c.key}">${fxFmtVal(c, v)}</b></span>
+      <input type="range" data-param="${c.key}" min="${c.min}" max="${c.max}" step="${c.step}" value="${v}" /></label>`;
+  }
+  if (c.kind === 'select') {
+    return `<label class="fx-field"><span>${mtbEsc(c.label)}</span><select data-param="${c.key}">${c.opts.map(([val, txt]) => `<option value="${mtbEsc(String(val))}" ${String(val) === String(v) ? 'selected' : ''}>${mtbEsc(txt)}</option>`).join('')}</select></label>`;
+  }
+  if (c.kind === 'seg') {
+    return `<div class="fx-field"><span>${mtbEsc(c.label)}</span><div class="fx-seg" data-segparam="${c.key}">${c.opts.map(([val, txt]) => `<button type="button" class="fx-seg-btn ${String(val) === String(v) ? 'on' : ''}" data-val="${mtbEsc(String(val))}">${mtbEsc(txt)}</button>`).join('')}</div></div>`;
+  }
+  if (c.kind === 'toggle') {
+    return `<label class="check-inline"><input type="checkbox" data-param="${c.key}" ${v ? 'checked' : ''} /> <span class="hint">${mtbEsc(c.label)}</span></label>`;
+  }
+  return '';
+}
+function fxAttachParamListeners(wrap, fx) {
+  wrap.querySelectorAll('[data-param]').forEach((el) => {
+    const key = el.dataset.param;
+    if (el.type === 'checkbox') {
+      el.addEventListener('change', () => { fx.params[key] = el.checked; fxRender(); });
+    } else if (el.type === 'range') {
+      el.addEventListener('input', () => {
+        const step = parseFloat(el.step);
+        fx.params[key] = step < 1 ? parseFloat(el.value) : parseInt(el.value, 10);
+        const def = FX_EFFECT_DEFS[fx.type].params(fx.params).find((c) => c.key === key);
+        const b = wrap.querySelector(`[data-valfor="${key}"]`); if (b && def) b.textContent = fxFmtVal(def, fx.params[key]);
+        fxRender();
+      });
+    } else if (el.tagName === 'SELECT') {
+      el.addEventListener('change', () => { fx.params[key] = el.value; fxRender(); });
+    }
+  });
+  wrap.querySelectorAll('[data-segparam]').forEach((seg) => {
+    const key = seg.dataset.segparam;
+    seg.querySelectorAll('button').forEach((btn) => btn.addEventListener('click', () => {
+      let val = btn.dataset.val; if (val === 'true') val = true; else if (val === 'false') val = false;
+      fx.params[key] = val;
+      seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
+      fxRender();
+    }));
+  });
+}
+
+// ----- pipeline -----
+function fxRender() {
+  if (!fxState.source) return;
+  const src = fxState.source;
+  const w = src.naturalWidth, h = src.naturalHeight;
+  if (!w || !h) return;
+  const MAX = 900; let outW = w, outH = h;
+  if (outW > MAX || outH > MAX) { const sc = MAX / Math.max(outW, outH); outW = Math.round(outW * sc); outH = Math.round(outH * sc); }
+  fxCanvas.width = outW; fxCanvas.height = outH;
+  fxCtx.drawImage(src, 0, 0, outW, outH);
+
+  if (fxState.brightness || fxState.contrast || fxState.saturation || fxState.invert || fxState.grayscale) fxAdjust();
+
+  let asciiText = false;
+  for (const fx of fxState.effects) {
+    if (!fx.enabled) continue;
+    fxApply(fx);
+    asciiText = fx.type === 'ascii' && fx.params.textMode;
+  }
+  fxState.isAsciiText = asciiText;
+  if (asciiText) { $('fxCanvas').classList.add('hidden'); $('fxAscii').classList.remove('hidden'); }
+  else { $('fxAscii').classList.add('hidden'); $('fxCanvas').classList.remove('hidden'); }
+  $('fxCopyAscii').classList.toggle('hidden', !asciiText);
+  $('fxStatus').textContent = `${outW}×${outH} · ${fxState.effects.filter((f) => f.enabled).length} fx`;
+}
+
+function fxApply(fx) {
+  switch (fx.type) {
+    case 'dither': return fxDither(fx.params);
+    case 'ascii': return fxAscii(fx.params);
+    case 'halftone': return fxHalftone(fx.params);
+    case 'posterize': return fxPosterize(fx.params);
+    case 'pixel': return fxPixelate(fx.params);
+    case 'threshold': return fxThreshold(fx.params);
+    case 'rgbshift': return fxRGBShift(fx.params);
+    case 'scanglitch': return fxScanGlitch(fx.params);
+    case 'slice': return fxSlice(fx.params);
+    case 'grain': return fxGrain(fx.params);
+    case 'crt': return fxCRT(fx.params);
+    case 'vignette': return fxVignette(fx.params);
+    case 'chromatic': return fxChromatic(fx.params);
+    case 'glow': return fxGlow(fx.params);
+    case 'blur': return fxBlur(fx.params);
+    case 'edge': return fxEdge(fx.params);
+    case 'emboss': return fxEmboss(fx.params);
+  }
+}
+
+function fxAdjust() {
+  const img = fxCtx.getImageData(0, 0, fxCanvas.width, fxCanvas.height); const d = img.data;
+  const b = fxState.brightness * 2.55, c = (fxState.contrast + 100) / 100, s = (fxState.saturation + 100) / 100;
+  const inv = fxState.invert, gray = fxState.grayscale;
+  for (let i = 0; i < d.length; i += 4) {
+    let r = d[i], g = d[i + 1], bl = d[i + 2];
+    if (gray) { const l = r * 0.299 + g * 0.587 + bl * 0.114; r = g = bl = l; }
+    if (s !== 1) { const l = r * 0.299 + g * 0.587 + bl * 0.114; r = l + (r - l) * s; g = l + (g - l) * s; bl = l + (bl - l) * s; }
+    r = (r - 128) * c + 128 + b; g = (g - 128) * c + 128 + b; bl = (bl - 128) * c + 128 + b;
+    if (inv) { r = 255 - r; g = 255 - g; bl = 255 - bl; }
+    d[i] = Math.max(0, Math.min(255, r)); d[i + 1] = Math.max(0, Math.min(255, g)); d[i + 2] = Math.max(0, Math.min(255, bl));
+  }
+  fxCtx.putImageData(img, 0, 0);
+}
+
+const FX_BAYER_4 = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+const FX_BAYER_8 = [[0, 32, 8, 40, 2, 34, 10, 42], [48, 16, 56, 24, 50, 18, 58, 26], [12, 44, 4, 36, 14, 46, 6, 38], [60, 28, 52, 20, 62, 30, 54, 22], [3, 35, 11, 43, 1, 33, 9, 41], [51, 19, 59, 27, 49, 17, 57, 25], [15, 47, 7, 39, 13, 45, 5, 37], [63, 31, 55, 23, 61, 29, 53, 21]];
+const FX_BAYER_16 = (() => { const m = []; for (let y = 0; y < 16; y++) { m.push([]); for (let x = 0; x < 16; x++) { const q = ((x & 8) >> 3) | ((y & 8) >> 2); m[y].push(FX_BAYER_8[y % 8][x % 8] * 4 + q); } } return m; })();
+
+function fxDither(p) {
+  const pal = fxActivePalette();
+  if (p.scale > 1) {
+    const sw = Math.max(1, Math.floor(fxCanvas.width / p.scale)), sh = Math.max(1, Math.floor(fxCanvas.height / p.scale));
+    fxWork.width = sw; fxWork.height = sh; fxWorkCtx.imageSmoothingEnabled = false; fxWorkCtx.drawImage(fxCanvas, 0, 0, sw, sh);
+    fxWorkCtx.putImageData(fxDitherOp(fxWorkCtx.getImageData(0, 0, sw, sh), pal, p.algorithm, p.strength), 0, 0);
+    fxCtx.imageSmoothingEnabled = false; fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height); fxCtx.drawImage(fxWork, 0, 0, fxCanvas.width, fxCanvas.height);
+  } else {
+    const img = fxCtx.getImageData(0, 0, fxCanvas.width, fxCanvas.height);
+    fxCtx.putImageData(fxDitherOp(img, pal, p.algorithm, p.strength), 0, 0);
+  }
+}
+function fxDitherOp(img, pal, algo, strength) {
+  const w = img.width, h = img.height; const d = new Float32Array(img.data.length);
+  for (let i = 0; i < img.data.length; i++) d[i] = img.data[i];
+  const diffuse = (matrix, div) => {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4; const oR = d[i], oG = d[i + 1], oB = d[i + 2];
+      const [nR, nG, nB] = fxClosest(oR, oG, oB, pal); d[i] = nR; d[i + 1] = nG; d[i + 2] = nB;
+      const eR = (oR - nR) * strength, eG = (oG - nG) * strength, eB = (oB - nB) * strength;
+      for (const [dx, dy, f] of matrix) { const nx = x + dx, ny = y + dy; if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue; const ni = (ny * w + nx) * 4; const fr = f / div; d[ni] += eR * fr; d[ni + 1] += eG * fr; d[ni + 2] += eB * fr; }
+    }
+  };
+  const M = {
+    floyd: [[[1, 0, 7], [-1, 1, 3], [0, 1, 5], [1, 1, 1]], 16],
+    atkinson: [[[1, 0, 1], [2, 0, 1], [-1, 1, 1], [0, 1, 1], [1, 1, 1], [0, 2, 1]], 8],
+    sierra: [[[1, 0, 2], [-1, 1, 1], [0, 1, 1]], 4],
+    burkes: [[[1, 0, 8], [2, 0, 4], [-2, 1, 2], [-1, 1, 4], [0, 1, 8], [1, 1, 4], [2, 1, 2]], 32],
+    stucki: [[[1, 0, 8], [2, 0, 4], [-2, 1, 2], [-1, 1, 4], [0, 1, 8], [1, 1, 4], [2, 1, 2], [-2, 2, 1], [-1, 2, 2], [0, 2, 4], [1, 2, 2], [2, 2, 1]], 42],
+    jarvis: [[[1, 0, 7], [2, 0, 5], [-2, 1, 3], [-1, 1, 5], [0, 1, 7], [1, 1, 5], [2, 1, 3], [-2, 2, 1], [-1, 2, 3], [0, 2, 5], [1, 2, 3], [2, 2, 1]], 48],
+  };
+  if (M[algo]) diffuse(M[algo][0], M[algo][1]);
+  else if (algo === 'bayer4' || algo === 'bayer8' || algo === 'bayer16') {
+    const matrix = algo === 'bayer4' ? FX_BAYER_4 : (algo === 'bayer8' ? FX_BAYER_8 : FX_BAYER_16);
+    const size = matrix.length, div = size * size;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; const thr = (matrix[y % size][x % size] / div - 0.5) * 64 * strength; const [nR, nG, nB] = fxClosest(d[i] + thr, d[i + 1] + thr, d[i + 2] + thr, pal); d[i] = nR; d[i + 1] = nG; d[i + 2] = nB; }
+  } else if (algo === 'random') {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; const n = (Math.random() - 0.5) * 64 * strength; const [nR, nG, nB] = fxClosest(d[i] + n, d[i + 1] + n, d[i + 2] + n, pal); d[i] = nR; d[i + 1] = nG; d[i + 2] = nB; }
+  }
+  for (let i = 0; i < img.data.length; i++) img.data[i] = Math.max(0, Math.min(255, d[i]));
+  return img;
+}
+
+function fxAscii(p) {
+  const chars = FX_ASCII_CHARSETS[p.charset]; const aspect = 0.5;
+  const w = fxCanvas.width, h = fxCanvas.height; const cols = p.density;
+  const rows = Math.max(1, Math.floor((h / w) * cols / aspect));
+  fxWork.width = cols; fxWork.height = rows; fxWorkCtx.imageSmoothingEnabled = true; fxWorkCtx.drawImage(fxCanvas, 0, 0, cols, rows);
+  const s = fxWorkCtx.getImageData(0, 0, cols, rows).data; const pal = fxActivePalette();
+  const inv = p.invertBright;
+  if (p.textMode) {
+    let out = '';
+    for (let y = 0; y < rows; y++) { for (let x = 0; x < cols; x++) { const i = (y * cols + x) * 4; const lum = (s[i] * 0.299 + s[i + 1] * 0.587 + s[i + 2] * 0.114) / 255; const br = inv ? 1 - lum : lum; out += chars[Math.max(0, Math.min(chars.length - 1, Math.floor(br * (chars.length - 1))))]; } out += '\n'; }
+    fxState.lastAsciiText = out;
+    const a = $('fxAscii'); a.textContent = out;
+    a.style.fontSize = Math.max(4, Math.min(12, 1000 / cols)) + 'px';
+    a.style.fontWeight = p.bold ? '700' : '400';
+    a.style.color = `rgb(${pal[0].join(',')})`; a.style.background = `rgb(${pal[pal.length - 1].join(',')})`;
+  } else {
+    const cellW = w / cols, cellH = h / rows; const bg = pal[pal.length - 1];
+    fxCtx.fillStyle = `rgb(${bg.join(',')})`; fxCtx.fillRect(0, 0, w, h);
+    const fs = Math.floor(Math.max(cellW, cellH) * 1.3);
+    fxCtx.font = `${p.bold ? 'bold ' : ''}${fs}px "Space Mono", monospace`; fxCtx.textBaseline = 'middle'; fxCtx.textAlign = 'center';
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      const i = (y * cols + x) * 4; const r = s[i], g = s[i + 1], b = s[i + 2];
+      const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255; const br = inv ? 1 - lum : lum;
+      const ch = chars[Math.max(0, Math.min(chars.length - 1, Math.floor(br * (chars.length - 1))))]; if (ch === ' ') continue;
+      if (p.colored) { const [cr, cg, cb] = fxClosest(r, g, b, pal); fxCtx.fillStyle = `rgb(${cr},${cg},${cb})`; } else fxCtx.fillStyle = `rgb(${pal[0].join(',')})`;
+      fxCtx.fillText(ch, x * cellW + cellW / 2, y * cellH + cellH / 2);
+    }
+  }
+}
+
+function fxHalftone(p) {
+  const step = p.dotSize * p.spacing; const angle = p.angle * Math.PI / 180; const pal = fxActivePalette();
+  const w = fxCanvas.width, h = fxCanvas.height;
+  fxWork.width = w; fxWork.height = h; fxWorkCtx.drawImage(fxCanvas, 0, 0);
+  const samples = fxWorkCtx.getImageData(0, 0, w, h).data;
+  if (p.cmyk) {
+    const angles = { c: 15, m: 75, y: 0, k: 45 }; const colors = { c: [0, 200, 220], m: [220, 0, 160], y: [240, 220, 0], k: [20, 20, 20] };
+    fxCtx.fillStyle = 'rgb(250,248,240)'; fxCtx.fillRect(0, 0, w, h); fxCtx.globalCompositeOperation = 'multiply';
+    for (const ch of ['c', 'm', 'y', 'k']) fxHalftoneChannel(samples, w, h, step, (p.angle + angles[ch]) * Math.PI / 180, p.shape, p.dotSize, colors[ch], ch, p.contrast);
+    fxCtx.globalCompositeOperation = 'source-over';
+  } else {
+    const bg = pal[pal.length - 1], fg = pal[0];
+    fxCtx.fillStyle = `rgb(${bg.join(',')})`; fxCtx.fillRect(0, 0, w, h);
+    fxHalftoneChannel(samples, w, h, step, angle, p.shape, p.dotSize, fg, 'k', p.contrast);
+  }
+}
+function fxHalftoneChannel(samples, w, h, step, angle, shape, dotSize, color, channel, contrast) {
+  fxCtx.fillStyle = `rgb(${color.join(',')})`;
+  const cos = Math.cos(angle), sin = Math.sin(angle), cx = w / 2, cy = h / 2, diag = Math.sqrt(w * w + h * h);
+  for (let y = -diag; y < diag; y += step) for (let x = -diag; x < diag; x += step) {
+    const ix = cos * x - sin * y + cx, iy = sin * x + cos * y + cy; const sx = Math.floor(ix), sy = Math.floor(iy);
+    if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
+    const i = (sy * w + sx) * 4; const r = samples[i], g = samples[i + 1], b = samples[i + 2];
+    let val; if (channel === 'c') val = 1 - r / 255; else if (channel === 'm') val = 1 - g / 255; else if (channel === 'y') val = 1 - b / 255; else val = 1 - Math.min(r, g, b) / 255;
+    val = Math.pow(val, 1 / contrast); const size = val * dotSize; if (size < 0.3) continue;
+    fxCtx.save(); fxCtx.translate(ix, iy); fxCtx.rotate(angle); fxHalftoneShape(shape, size, dotSize); fxCtx.restore();
+  }
+}
+function fxHalftoneShape(shape, size, maxSize) {
+  if (shape === 'circle') { fxCtx.beginPath(); fxCtx.arc(0, 0, size / 2, 0, Math.PI * 2); fxCtx.fill(); }
+  else if (shape === 'square') fxCtx.fillRect(-size / 2, -size / 2, size, size);
+  else if (shape === 'diamond') { fxCtx.beginPath(); fxCtx.moveTo(0, -size / 2); fxCtx.lineTo(size / 2, 0); fxCtx.lineTo(0, size / 2); fxCtx.lineTo(-size / 2, 0); fxCtx.closePath(); fxCtx.fill(); }
+  else if (shape === 'line') fxCtx.fillRect(-maxSize / 2, -size / 3, maxSize, size / 1.5);
+  else if (shape === 'cross') { const t = size / 3; fxCtx.fillRect(-size / 2, -t / 2, size, t); fxCtx.fillRect(-t / 2, -size / 2, t, size); }
+  else if (shape === 'hex') { fxCtx.beginPath(); for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2, px = Math.cos(a) * size / 2, py = Math.sin(a) * size / 2; if (i === 0) fxCtx.moveTo(px, py); else fxCtx.lineTo(px, py); } fxCtx.closePath(); fxCtx.fill(); }
+}
+
+function fxPosterize(p) {
+  const pal = fxActivePalette(); const img = fxCtx.getImageData(0, 0, fxCanvas.width, fxCanvas.height); const d = img.data;
+  const step = 255 / (p.levels - 1);
+  for (let i = 0; i < d.length; i += 4) {
+    let r = Math.round(Math.round(d[i] / step) * step), g = Math.round(Math.round(d[i + 1] / step) * step), b = Math.round(Math.round(d[i + 2] / step) * step);
+    if (p.usePalette) [r, g, b] = fxClosest(r, g, b, pal); d[i] = r; d[i + 1] = g; d[i + 2] = b;
+  }
+  fxCtx.putImageData(img, 0, 0);
+}
+
+function fxPixelate(p) {
+  const w = fxCanvas.width, h = fxCanvas.height; const sw = Math.max(1, Math.floor(w / p.size)), sh = Math.max(1, Math.floor(h / p.size)); const pal = fxActivePalette();
+  fxWork.width = sw; fxWork.height = sh; fxWorkCtx.imageSmoothingEnabled = false; fxWorkCtx.drawImage(fxCanvas, 0, 0, sw, sh);
+  if (p.usePalette) { const id = fxWorkCtx.getImageData(0, 0, sw, sh); const d = id.data; for (let i = 0; i < d.length; i += 4) { const [nr, ng, nb] = fxClosest(d[i], d[i + 1], d[i + 2], pal); d[i] = nr; d[i + 1] = ng; d[i + 2] = nb; } fxWorkCtx.putImageData(id, 0, 0); }
+  fxCtx.imageSmoothingEnabled = false; fxCtx.clearRect(0, 0, w, h); fxCtx.drawImage(fxWork, 0, 0, w, h);
+}
+
+function fxThreshold(p) {
+  const pal = fxActivePalette(); const dark = pal[0], light = pal[pal.length - 1];
+  const img = fxCtx.getImageData(0, 0, fxCanvas.width, fxCanvas.height); const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+    if (p.smooth > 0) { const t = Math.max(0, Math.min(1, (lum - (p.level - p.smooth)) / (2 * p.smooth))); d[i] = dark[0] + (light[0] - dark[0]) * t; d[i + 1] = dark[1] + (light[1] - dark[1]) * t; d[i + 2] = dark[2] + (light[2] - dark[2]) * t; }
+    else { const c = lum > p.level ? light : dark; d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; }
+  }
+  fxCtx.putImageData(img, 0, 0);
+}
+
+function fxRGBShift(p) {
+  const angle = p.angle * Math.PI / 180, dx = Math.cos(angle) * p.amount, dy = Math.sin(angle) * p.amount;
+  const w = fxCanvas.width, h = fxCanvas.height; const s = fxCtx.getImageData(0, 0, w, h).data; const out = fxCtx.createImageData(w, h); const o = out.data;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4; const rx = Math.round(x - dx), ry = Math.round(y - dy), bx = Math.round(x + dx), by = Math.round(y + dy);
+    const ri = (Math.max(0, Math.min(h - 1, ry)) * w + Math.max(0, Math.min(w - 1, rx))) * 4;
+    const bi = (Math.max(0, Math.min(h - 1, by)) * w + Math.max(0, Math.min(w - 1, bx))) * 4;
+    o[i] = s[ri]; o[i + 1] = s[i + 1]; o[i + 2] = s[bi + 2]; o[i + 3] = s[i + 3];
+  }
+  fxCtx.putImageData(out, 0, 0);
+}
+
+function fxScanGlitch(p) {
+  const w = fxCanvas.width, h = fxCanvas.height; const intensity = p.intensity / 100; const freq = p.frequency;
+  const s = fxCtx.getImageData(0, 0, w, h).data; const out = fxCtx.createImageData(w, h); const o = out.data; o.set(s);
+  for (let sl = 0; sl < freq; sl++) {
+    const seed = sl * 37 + p.seed; const rnd = (Math.sin(seed) + 1) * 0.5; if (rnd > 0.7) continue;
+    const sliceY = Math.floor(((seed * 13) % 100) / 100 * h); const sliceH = Math.floor(rnd * 30 * intensity) + 1;
+    const shift = Math.floor((((seed * 17) % 200) - 100) / 100 * 60 * intensity);
+    for (let y = sliceY; y < sliceY + sliceH && y < h; y++) for (let x = 0; x < w; x++) {
+      const srcX = Math.max(0, Math.min(w - 1, x - shift)); const si = (y * w + srcX) * 4, di = (y * w + x) * 4;
+      o[di] = s[si]; o[di + 1] = s[si + 1]; o[di + 2] = s[si + 2]; o[di + 3] = s[si + 3];
+    }
+  }
+  fxCtx.putImageData(out, 0, 0);
+}
+
+function fxSlice(p) {
+  const w = fxCanvas.width, h = fxCanvas.height; const s = fxCtx.getImageData(0, 0, w, h).data; const out = fxCtx.createImageData(w, h); const o = out.data;
+  const sliceH = Math.ceil(h / p.slices);
+  for (let sl = 0; sl < p.slices; sl++) {
+    const seed = sl * 23 + p.seed; const rnd = (Math.sin(seed) + 1) * 0.5; const offset = Math.floor((rnd - 0.5) * 2 * p.maxOffset);
+    const y0 = sl * sliceH, y1 = Math.min(y0 + sliceH, h);
+    for (let y = y0; y < y1; y++) for (let x = 0; x < w; x++) { const srcX = ((x - offset) % w + w) % w; const si = (y * w + srcX) * 4, di = (y * w + x) * 4; o[di] = s[si]; o[di + 1] = s[si + 1]; o[di + 2] = s[si + 2]; o[di + 3] = s[si + 3]; }
+  }
+  fxCtx.putImageData(out, 0, 0);
+}
+
+function fxGrain(p) {
+  const w = fxCanvas.width, h = fxCanvas.height; const img = fxCtx.getImageData(0, 0, w, h); const d = img.data; const amount = p.amount, size = p.size;
+  if (size === 1) {
+    for (let i = 0; i < d.length; i += 4) {
+      if (p.mono) { const n = (Math.random() - 0.5) * amount * 2; d[i] = Math.max(0, Math.min(255, d[i] + n)); d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n)); d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n)); }
+      else { d[i] += (Math.random() - 0.5) * amount * 2; d[i + 1] += (Math.random() - 0.5) * amount * 2; d[i + 2] += (Math.random() - 0.5) * amount * 2; }
+    }
+  } else {
+    for (let y = 0; y < h; y += size) for (let x = 0; x < w; x += size) {
+      const n = (Math.random() - 0.5) * amount * 2; const nr = p.mono ? n : (Math.random() - 0.5) * amount * 2, ng = p.mono ? n : (Math.random() - 0.5) * amount * 2, nb = p.mono ? n : (Math.random() - 0.5) * amount * 2;
+      for (let dy = 0; dy < size && y + dy < h; dy++) for (let dx = 0; dx < size && x + dx < w; dx++) { const i = ((y + dy) * w + (x + dx)) * 4; d[i] = Math.max(0, Math.min(255, d[i] + nr)); d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + ng)); d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + nb)); }
+    }
+  }
+  fxCtx.putImageData(img, 0, 0);
+}
+
+function fxCRT(p) {
+  const w = fxCanvas.width, h = fxCanvas.height; const lines = p.scanlines; const img = fxCtx.getImageData(0, 0, w, h); const d = img.data;
+  for (let y = 0; y < h; y++) {
+    const dim = (y % lines < lines / 2) ? 1 : 0.55;
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (p.stripes) { const st = x % 3; if (st === 0) { d[i + 1] *= 0.7; d[i + 2] *= 0.7; } else if (st === 1) { d[i] *= 0.7; d[i + 2] *= 0.7; } else { d[i] *= 0.7; d[i + 1] *= 0.7; } }
+      d[i] *= dim; d[i + 1] *= dim; d[i + 2] *= dim;
+    }
+  }
+  fxCtx.putImageData(img, 0, 0);
+  if (p.vignette > 0) { const g = fxCtx.createRadialGradient(w / 2, h / 2, Math.min(w, h) / 3, w / 2, h / 2, Math.max(w, h) / 1.1); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${p.vignette})`); fxCtx.fillStyle = g; fxCtx.fillRect(0, 0, w, h); }
+}
+
+function fxVignette(p) {
+  const w = fxCanvas.width, h = fxCanvas.height; const inner = Math.min(w, h) * (1 - p.softness) * 0.4, outer = Math.max(w, h) * 0.7;
+  const g = fxCtx.createRadialGradient(w / 2, h / 2, inner, w / 2, h / 2, outer); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${p.amount})`); fxCtx.fillStyle = g; fxCtx.fillRect(0, 0, w, h);
+}
+
+function fxChromatic(p) {
+  const amount = p.amount, w = fxCanvas.width, h = fxCanvas.height, cx = w / 2, cy = h / 2;
+  const s = fxCtx.getImageData(0, 0, w, h).data; const out = fxCtx.createImageData(w, h); const o = out.data; const maxDist = Math.sqrt(cx * cx + cy * cy);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4; let dx = 0, dy = 0;
+    if (p.radial) { dx = ((x - cx) / maxDist) * amount; dy = ((y - cy) / maxDist) * amount; } else dx = amount;
+    const rx = Math.max(0, Math.min(w - 1, Math.round(x - dx))), ry = Math.max(0, Math.min(h - 1, Math.round(y - dy)));
+    const bx = Math.max(0, Math.min(w - 1, Math.round(x + dx))), by = Math.max(0, Math.min(h - 1, Math.round(y + dy)));
+    o[i] = s[(ry * w + rx) * 4]; o[i + 1] = s[i + 1]; o[i + 2] = s[(by * w + bx) * 4 + 2]; o[i + 3] = s[i + 3];
+  }
+  fxCtx.putImageData(out, 0, 0);
+}
+
+function fxGlow(p) {
+  const w = fxCanvas.width, h = fxCanvas.height;
+  fxWork.width = w; fxWork.height = h; fxWorkCtx.drawImage(fxCanvas, 0, 0);
+  const wd = fxWorkCtx.getImageData(0, 0, w, h); const dd = wd.data;
+  for (let i = 0; i < dd.length; i += 4) { const lum = dd[i] * 0.299 + dd[i + 1] * 0.587 + dd[i + 2] * 0.114; if (lum < p.threshold) { dd[i] = 0; dd[i + 1] = 0; dd[i + 2] = 0; } }
+  fxWorkCtx.putImageData(wd, 0, 0);
+  const bc = document.createElement('canvas'); bc.width = w; bc.height = h; const bctx = bc.getContext('2d'); bctx.filter = `blur(${p.radius}px)`; bctx.drawImage(fxWork, 0, 0);
+  fxCtx.globalCompositeOperation = 'lighter'; fxCtx.globalAlpha = p.amount; fxCtx.drawImage(bc, 0, 0); fxCtx.globalAlpha = 1; fxCtx.globalCompositeOperation = 'source-over';
+}
+
+function fxBlur(p) {
+  if (p.radius === 0) return;
+  fxWork.width = fxCanvas.width; fxWork.height = fxCanvas.height; fxWorkCtx.filter = `blur(${p.radius}px)`; fxWorkCtx.drawImage(fxCanvas, 0, 0); fxWorkCtx.filter = 'none';
+  fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height); fxCtx.drawImage(fxWork, 0, 0);
+}
+
+function fxEdge(p) {
+  const w = fxCanvas.width, h = fxCanvas.height; const s = fxCtx.getImageData(0, 0, w, h).data; const out = fxCtx.createImageData(w, h); const o = out.data;
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = (y * w + x) * 4; let gx = 0, gy = 0;
+    for (let ky = -1; ky <= 1; ky++) for (let kx = -1; kx <= 1; kx++) { const ni = ((y + ky) * w + (x + kx)) * 4; const lum = s[ni] * 0.299 + s[ni + 1] * 0.587 + s[ni + 2] * 0.114; gx += lum * (kx * (ky === 0 ? 2 : 1)); gy += lum * (ky * (kx === 0 ? 2 : 1)); }
+    let mag = Math.min(255, Math.sqrt(gx * gx + gy * gy) * p.strength); if (p.invert) mag = 255 - mag;
+    o[i] = mag; o[i + 1] = mag; o[i + 2] = mag; o[i + 3] = 255;
+  }
+  fxCtx.putImageData(out, 0, 0);
+}
+
+function fxEmboss(p) {
+  const w = fxCanvas.width, h = fxCanvas.height; const s = fxCtx.getImageData(0, 0, w, h).data; const out = fxCtx.createImageData(w, h); const o = out.data;
+  const kernel = [[-2, -1, 0], [-1, 1, 1], [0, 1, 2]];
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = (y * w + x) * 4; let r = 0, g = 0, b = 0;
+    for (let ky = -1; ky <= 1; ky++) for (let kx = -1; kx <= 1; kx++) { const ni = ((y + ky) * w + (x + kx)) * 4; const k = kernel[ky + 1][kx + 1] * p.strength; r += s[ni] * k; g += s[ni + 1] * k; b += s[ni + 2] * k; }
+    o[i] = Math.max(0, Math.min(255, r + 128)); o[i + 1] = Math.max(0, Math.min(255, g + 128)); o[i + 2] = Math.max(0, Math.min(255, b + 128)); o[i + 3] = 255;
+  }
+  fxCtx.putImageData(out, 0, 0);
+}
+
+function fxSave() {
+  if (!fxState.source) return;
+  const a = document.createElement('a');
+  if (fxState.isAsciiText) {
+    const blob = new Blob([fxState.lastAsciiText || ''], { type: 'text/plain' });
+    a.href = URL.createObjectURL(blob); a.download = `photo-effects-${Date.now()}.txt`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    $('fxStatus').textContent = 'Saved ASCII text';
+  } else {
+    a.href = fxCanvas.toDataURL('image/png'); a.download = `photo-effects-${Date.now()}.png`; a.click();
+    $('fxStatus').textContent = 'Saved PNG';
+  }
+  toast('Photo effects saved');
+}
+
 // ---------- tool options bar (for op tools) ----------
 function renderToolOptions() {
   const bar = $('toolOptions');
@@ -216,6 +1057,11 @@ function renderToolOptions() {
   else if (op === 'flip') html = field('Direction', `<select data-k="flip"><option value="h" ${b.flip === 'h' ? 'selected' : ''}>Horizontal</option><option value="v" ${b.flip === 'v' ? 'selected' : ''}>Vertical</option></select>`);
   else if (op === 'crop') html = field('X', `<input type="number" data-k="cropX" value="${b.cropX || 0}">`) + field('Y', `<input type="number" data-k="cropY" value="${b.cropY || 0}">`) + field('Width', `<input type="number" data-k="cropW" value="${b.cropW || 0}">`) + field('Height', `<input type="number" data-k="cropH" value="${b.cropH || 0}">`);
   else if (op === 'trim') html = field('Start (hh:mm:ss)', `<input type="text" data-k="start" value="${b.start || '00:00:00'}">`) + field('End (hh:mm:ss, blank=end)', `<input type="text" data-k="end" value="${b.end || ''}">`);
+  else if (op === 'speed') html = field('Speed', `<select data-k="speed"><option value="0.25" ${b.speed == 0.25 ? 'selected' : ''}>0.25× (slow)</option><option value="0.5" ${b.speed == 0.5 ? 'selected' : ''}>0.5×</option><option value="1" ${b.speed == 1 ? 'selected' : ''}>1× (normal)</option><option value="1.5" ${b.speed == 1.5 ? 'selected' : ''}>1.5×</option><option value="2" ${b.speed == 2 ? 'selected' : ''}>2×</option><option value="4" ${b.speed == 4 ? 'selected' : ''}>4× (fast)</option></select>`);
+  else if (op === 'fps') html = field('Target FPS', `<select data-k="fps"><option value="24" ${b.fps == 24 ? 'selected' : ''}>24</option><option value="30" ${b.fps == 30 ? 'selected' : ''}>30</option><option value="60" ${b.fps == 60 ? 'selected' : ''}>60</option><option value="120" ${b.fps == 120 ? 'selected' : ''}>120</option></select>`) + field('Smooth (interpolate)', `<select data-k="interpolate"><option value="" ${!b.interpolate ? 'selected' : ''}>No (drop/dup frames)</option><option value="1" ${b.interpolate ? 'selected' : ''}>Yes (motion blend)</option></select>`);
+  else if (op === 'stabilize') html = field('Smoothing', `<select data-k="smoothing"><option value="5" ${b.smoothing == 5 ? 'selected' : ''}>Low (5)</option><option value="10" ${b.smoothing == 10 ? 'selected' : ''}>Medium (10)</option><option value="20" ${b.smoothing == 20 ? 'selected' : ''}>High (20)</option><option value="40" ${b.smoothing == 40 ? 'selected' : ''}>Max (40)</option></select>`);
+  else if (op === 'denoise') html = field('Strength', `<select data-k="denoise"><option value="6" ${b.denoise == 6 ? 'selected' : ''}>Gentle</option><option value="12" ${b.denoise == 12 ? 'selected' : ''}>Medium</option><option value="24" ${b.denoise == 24 ? 'selected' : ''}>Strong</option><option value="36" ${b.denoise == 36 ? 'selected' : ''}>Aggressive</option></select>`);
+  else if (op === 'upscale') html = field('Scale factor', `<select data-k="factor"><option value="2" ${b.factor == 2 ? 'selected' : ''}>2×</option><option value="3" ${b.factor == 3 ? 'selected' : ''}>3×</option><option value="4" ${b.factor == 4 ? 'selected' : ''}>4×</option></select>`) + field('Algorithm', `<select data-k="algo"><option value="lanczos" ${b.algo === 'lanczos' ? 'selected' : ''}>Lanczos (photo)</option><option value="xbr" ${b.algo === 'xbr' ? 'selected' : ''}>xBR (pixel art)</option></select>`);
   else if (op === 'extract') html = field('First page', `<input type="number" data-k="firstPage" value="${b.firstPage || 1}" min="1">`) + field('Last page (0=end)', `<input type="number" data-k="lastPage" value="${b.lastPage || 0}" min="0">`);
   else if (op === 'protect') html = field('Password', `<input type="text" data-k="password" value="${b.password || ''}" placeholder="set a password">`);
   else if (op === 'remove') html = field('Remove from page', `<input type="number" data-k="removeFirst" value="${b.removeFirst || 1}" min="1">`) + field('to page', `<input type="number" data-k="removeLast" value="${b.removeLast || 1}" min="1">`);
@@ -343,6 +1189,13 @@ function refreshFooter() {
   $('emptyHint').classList.toggle('hidden', ws.list.size > 0);
   $('footer').classList.toggle('hidden', ws.list.size === 0);
   $('btnCompress').disabled = ws.isMerge ? ws.list.size < 2 : ready === 0;
+  refreshCancelState();
+}
+// The Cancel button is inert until at least one job is queued/running.
+function refreshCancelState() {
+  const ws = state.ws;
+  const active = ws ? [...ws.list.values()].some((e) => e.status === 'queued' || e.status === 'running') : false;
+  const btn = $('btnCancelAll'); if (btn) btn.classList.toggle('inert', !active);
 }
 function findEntry(jobId) { return state.ws && state.ws.list.has(jobId) ? state.ws.list.get(jobId) : null; }
 
@@ -364,6 +1217,7 @@ async function runActive() {
     entry.status = 'queued';
     // Update this row IN PLACE — don't rebuild the list (keeps everything stable).
     if (entry.els) { entry.els.progress.classList.remove('hidden'); entry.els.status.textContent = 'Queued'; entry.els.status.className = 'fr-status'; applyRowControls(entry); }
+    refreshCancelState(); // a job is now queued — wake the Cancel button
     try {
       const { outputPath } = await window.api.startJob({ jobId: entry.jobId, mediaType: entry.mediaType, inputPath: entry.path, settings: entry.settings, meta: entry.meta, outputDir: state.outputDir, convert: !!entry.convert });
       entry.outputPath = outputPath;
@@ -378,11 +1232,12 @@ function wireJobEvents() {
     if (d.indeterminate) { e.els.bar.classList.add('indet'); e.els.status.textContent = 'Processing…'; }
     else { e.els.bar.classList.remove('indet'); e.els.bar.style.width = `${d.percent.toFixed(1)}%`; e.els.status.textContent = `${d.percent.toFixed(0)}%${d.speed ? ` · ${d.speed.toFixed(1)}x` : ''}`; }
     e.els.status.className = 'fr-status';
+    refreshCancelState();
   });
   window.api.onJobDone((d) => {
     // Stretch tool job (no file row).
     if (d.jobId === state._stretchJob) {
-      $('stBar').style.width = '100%'; $('stStatus').className = 'fr-status done'; $('stStatus').textContent = `Done (${fmtBytes(d.outSize)}) — click to open`; $('stStatus').onclick = () => window.api.showItem(d.outputPath); $('stRender').disabled = false; toast('Stretch complete', { path: d.outputPath }); state._stretchJob = null; return;
+      $('stBar').style.width = '100%'; $('stStatus').className = 'fr-status done'; $('stStatus').textContent = `Done (${fmtBytes(d.outSize)}) — click to open`; $('stStatus').onclick = () => window.api.showItem(d.outputPath); $('stRender').disabled = false; toast('Stretch complete', { path: d.outputPath }); addRecent({ path: d.outputPath }); state._stretchJob = null; return;
     }
     const e = findEntry(d.jobId); if (!e || !e.els) { toast('Done'); return; }
     e.status = 'done'; e.outputPath = d.outputPath; e.els.bar.classList.remove('indet'); e.els.bar.style.width = '100%';
@@ -390,6 +1245,8 @@ function wireJobEvents() {
     e.els.status.textContent = `Done (${fmtBytes(d.outSize)}${was}) — double-click to open`; e.els.status.className = 'fr-status done';
     if (e.els.setDone) e.els.setDone();
     toast(`Done: ${e.name}`, { path: d.outputPath });
+    addRecent({ name: e.name, path: d.outputPath });
+    refreshCancelState(); // job finished — re-evaluate the Cancel button
   });
   window.api.onJobError((d) => {
     const e = findEntry(d.jobId); if (!e || !e.els) return;
@@ -567,19 +1424,83 @@ function openSpecial(id) {
 
 // ---------- Metadata editor ----------
 const META_LABELS = { title: 'Title', artist: 'Artist', album: 'Album', album_artist: 'Album artist', composer: 'Composer', genre: 'Genre', date: 'Year', track: 'Track', comment: 'Comment', description: 'Description' };
-const metaState = { path: null, original: {}, keys: [] };
+const metaState = { path: null, original: {}, keys: [], kind: null, hasAudio: false, fileInfo: null, editable: [], readonly: [] };
 function openMetaEditor() {
   hideAll(); state.section = 'tools';
   $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Metadata Editor';
   setHero('Metadata Editor', 'Edit or scrub the metadata baked into a media file');
   $('metaPanel').classList.remove('hidden');
 }
+function mtbEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function fmtBytes(n) {
+  if (!n && n !== 0) return '—';
+  if (n < 1024) return `${n} B`;
+  const u = ['KB', 'MB', 'GB', 'TB']; let i = -1; let v = n;
+  do { v /= 1024; i++; } while (v >= 1024 && i < u.length - 1);
+  return `${v.toFixed(v < 10 ? 2 : 1)} ${u[i]}`;
+}
+function fmtDate(ms) { if (!ms) return '—'; try { return new Date(ms).toLocaleString(); } catch { return '—'; } }
 function renderMetaFields(tags) {
-  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  // Render an input for every key the file surfaced (standard + the file's own tags),
-  // each pre-filled with its current value so the user edits instead of guessing.
+  const title = $('meFieldsTitle');
+  if (metaState.kind === 'image') {
+    // Images: one input per editable EXIF/IPTC/XMP/ICC/GPS/MakerNotes tag,
+    // labelled by its prettified tag name, keyed by the full 'Group:Tag'.
+    if (title) title.textContent = 'editable metadata (exif / iptc / xmp / icc)';
+    const items = metaState.editable || [];
+    if (!items.length) { $('meFields').innerHTML = '<p class="me-empty-note">No editable metadata found in this image.</p>'; return; }
+    // Group the inputs under their exiftool group for readability.
+    const byGroup = {};
+    for (const it of items) { (byGroup[it.group] = byGroup[it.group] || []).push(it); }
+    $('meFields').innerHTML = Object.keys(byGroup).map((g) => {
+      const rows = byGroup[g].map((it) => `<label class="field"><span title="${mtbEsc(it.key)}">${mtbEsc(it.label)}</span><input type="text" data-mk="${mtbEsc(it.key)}" data-orig="${mtbEsc(it.value)}" value="${mtbEsc(it.value)}"/></label>`).join('');
+      return `<div class="me-group"><div class="me-group-title">${mtbEsc(g)}</div><div class="me-group-fields">${rows}</div></div>`;
+    }).join('');
+    return;
+  }
+  // Audio/video: an input for every key the file surfaced (standard + own tags).
+  if (title) title.textContent = 'editable tags';
   const keys = metaState.keys.length ? metaState.keys : Object.keys(META_LABELS);
-  $('meFields').innerHTML = keys.map((k) => `<label class="field"><span>${esc(META_LABELS[k] || k)}</span><input type="text" data-mk="${esc(k)}" value="${esc(tags[k])}"/></label>`).join('');
+  $('meFields').innerHTML = keys.map((k) => `<label class="field"><span>${mtbEsc(META_LABELS[k] || k)}</span><input type="text" data-mk="${mtbEsc(k)}" value="${mtbEsc(tags[k])}"/></label>`).join('');
+}
+function renderMetaReadonly() {
+  // Image-only: computed/file fields (File/Composite/ExifTool) shown muted.
+  const box = $('meReadonly'); if (!box) return;
+  const items = (metaState.kind === 'image' && metaState.readonly) ? metaState.readonly : [];
+  if (!items.length) { box.innerHTML = ''; return; }
+  const rows = items.map((it) => `<div class="me-ro-row"><span class="me-ro-l">${mtbEsc(it.label)}</span><span class="me-ro-v">${mtbEsc(it.value)}</span></div>`).join('');
+  box.innerHTML = `<div class="me-sec-title">computed / file fields (read-only)</div><div class="me-ro-list">${rows}</div>`;
+}
+function renderMetaQuick() {
+  // Quick-actions, scoped to the detected media kind.
+  const kind = metaState.kind; // 'video' | 'audio' | 'image'
+  const cb = (id, label) => `<label class="me-check"><input type="checkbox" id="${id}"/> <span>${label}</span></label>`;
+  let html = '';
+  if (kind === 'video' || kind === 'image') html += cb('meqGps', 'Scrub GPS / location');
+  if (kind === 'video' || kind === 'audio') html += cb('meqCreation', 'Clear creation app / device info');
+  if (kind === 'video' && metaState.hasAudio) html += cb('meqNoAudio', 'Disable audio (drop audio stream)');
+  $('meQuick').innerHTML = html ? `<div class="me-sec-title">quick actions</div><div class="me-checks">${html}</div>` : '';
+}
+function renderMetaFileInfo() {
+  const fi = metaState.fileInfo; const box = $('meFileInfo');
+  if (!fi) { box.innerHTML = ''; return; }
+  const attrs = [];
+  if (fi.readOnly) attrs.push('read-only');
+  const rows = [
+    ['Size', fmtBytes(fi.sizeBytes)],
+    ['Size on disk (approx.)', fmtBytes(fi.sizeOnDisk)],
+    ['Created', fmtDate(fi.createdMs)],
+    ['Modified', fmtDate(fi.modifiedMs)],
+    ['Accessed', fmtDate(fi.accessedMs)],
+    ['Attributes', attrs.length ? attrs.join(', ') : 'none'],
+  ];
+  box.innerHTML = `<div class="me-sec-title">file info (read-only)</div><div class="me-info-grid">${rows.map(([l, v]) => `<div class="me-info-row"><span class="me-info-l">${l}</span><span class="me-info-v">${mtbEsc(v)}</span></div>`).join('')}</div>`;
+}
+function detectMetaKind(r, path) {
+  if (r.codecType === 'video' || r.codecType === 'audio') return r.codecType;
+  const ext = (path.split('.').pop() || '').toLowerCase();
+  if (['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'tif', 'jfif', 'gif', 'heic'].includes(ext)) return 'image';
+  if (['mp3', 'wav', 'aac', 'm4a', 'ogg', 'opus', 'flac', 'wma', 'aiff'].includes(ext)) return 'audio';
+  return 'video';
 }
 function wireMetaEditor() {
   $('meLoad').addEventListener('click', async () => {
@@ -589,16 +1510,39 @@ function wireMetaEditor() {
     try {
       const r = await window.api.metaRead(paths[0]);
       metaState.original = r.tags || {}; metaState.keys = r.keys || [];
+      metaState.kind = r.kind || detectMetaKind(r, paths[0]);
+      metaState.hasAudio = !!r.hasAudio; metaState.fileInfo = r.fileInfo || null;
+      metaState.editable = r.editable || []; metaState.readonly = r.readonly || [];
       renderMetaFields(metaState.original);
+      renderMetaQuick();
+      renderMetaReadonly();
+      renderMetaFileInfo();
       $('meEmpty').classList.add('hidden'); $('meBody').classList.remove('hidden');
     } catch (e) { toast('Could not read metadata', { kind: 'error' }); }
   });
-  const collect = () => { const t = {}; document.querySelectorAll('#meFields input[data-mk]').forEach((el) => { t[el.dataset.mk] = el.value; }); return t; };
+  const collect = () => {
+    const t = {};
+    document.querySelectorAll('#meFields input[data-mk]').forEach((el) => {
+      if (metaState.kind === 'image') {
+        // Images: only send tags the user actually changed (keyed Group:Tag).
+        if (el.value !== (el.dataset.orig || '')) t[el.dataset.mk] = el.value;
+      } else {
+        t[el.dataset.mk] = el.value;
+      }
+    });
+    return t;
+  };
+  const quick = () => ({
+    clearGps: !!($('meqGps') && $('meqGps').checked),
+    clearCreation: !!($('meqCreation') && $('meqCreation').checked),
+    removeAudio: !!($('meqNoAudio') && $('meqNoAudio').checked),
+  });
   const write = async (scrub) => {
     if (!metaState.path) return;
     $('meStatus').textContent = 'Saving…'; $('meStatus').className = 'fr-status';
     try {
-      const res = await window.api.metaWrite({ inputPath: metaState.path, tags: scrub ? {} : collect(), scrub, outputDir: state.outputDir });
+      const q = scrub ? {} : quick();
+      const res = await window.api.metaWrite({ inputPath: metaState.path, kind: metaState.kind, tags: scrub ? {} : collect(), scrub, outputDir: state.outputDir, ...q });
       $('meStatus').textContent = `Saved → ${baseName(res.outputPath)}`; $('meStatus').className = 'fr-status done';
       $('meStatus').onclick = () => window.api.showItem(res.outputPath);
       toast(scrub ? 'Metadata scrubbed' : 'Metadata saved', { path: res.outputPath });
@@ -606,7 +1550,7 @@ function wireMetaEditor() {
   };
   $('meSave').addEventListener('click', () => write(false));
   $('meScrub').addEventListener('click', () => write(true));
-  $('meReset').addEventListener('click', () => renderMetaFields(metaState.original));
+  $('meReset').addEventListener('click', () => { renderMetaFields(metaState.original); renderMetaQuick(); renderMetaReadonly(); });
 }
 
 // ---------- Color Picker ----------
@@ -629,11 +1573,40 @@ function wireColorPicker() {
     $('cpSwatch').style.background = hex; $('cpHex').value = hex; $('cpRgb').value = `rgb(${d[0]}, ${d[1]}, ${d[2]})`;
   };
   canvas.addEventListener('mousemove', read); canvas.addEventListener('click', read);
+  // Pick from screen via the Chromium EyeDropper API (Electron renderer).
+  const setColor = (hex) => {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || ''); if (!m) return;
+    const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+    const h = '#' + m[1].toLowerCase() + m[2].toLowerCase() + m[3].toLowerCase();
+    $('cpSwatch').style.background = h; $('cpHex').value = h; $('cpRgb').value = `rgb(${r}, ${g}, ${b})`;
+  };
+  const screenBtn = $('cpScreen');
+  if (screenBtn) {
+    if (typeof window.EyeDropper === 'undefined') screenBtn.disabled = true;
+    screenBtn.addEventListener('click', async () => {
+      try { const eye = new EyeDropper(); const res = await eye.open(); setColor(res.sRGBHex); }
+      catch { /* user canceled */ }
+    });
+  }
 }
 
 // ---------- YouTube ----------
 const yt = { info: null, downloading: false };
 function ytErr(m) { const el = $('ytError'); if (!m) { el.classList.add('hidden'); return; } el.textContent = m; el.classList.remove('hidden'); }
+// Turn a Windows/Unix path into a file:/// URL the <video> tag can load (CSP allows file:).
+function fileUrl(p) { return 'file:///' + String(p || '').replace(/\\/g, '/').replace(/^\/+/, ''); }
+const PLAYABLE_EXT = ['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v', 'mp3', 'm4a', 'ogg', 'opus', 'wav', 'flac', 'aac'];
+function isPlayable(p) { const ext = (String(p || '').split('.').pop() || '').toLowerCase(); return PLAYABLE_EXT.includes(ext); }
+// Reveal the downloader preview <video> pointed at a local file (CSP allows file:).
+function ytPlayFile(path, name) {
+  const wrap = $('ytPreview'), v = $('ytVideo'); if (!wrap || !v) return;
+  $('ytPreviewName').textContent = name || baseName(path);
+  v.src = fileUrl(path);
+  wrap.classList.remove('hidden');
+  try { v.load(); } catch { /* */ }
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function ytClosePreview() { const wrap = $('ytPreview'), v = $('ytVideo'); if (!wrap || !v) return; try { v.pause(); } catch { /* */ } v.removeAttribute('src'); try { v.load(); } catch { /* */ } wrap.classList.add('hidden'); }
 function ytRefreshSub() {
   const mode = $('ytMode').value, sub = $('ytSub');
   if (mode === 'audio') sub.innerHTML = ['mp3', 'ogg', 'm4a', 'opus', 'wav'].map((f) => `<option value="${f}">${f.toUpperCase()}</option>`).join('');
@@ -667,20 +1640,169 @@ async function ytDownload() {
   else if (mode === 'video') { opts.audioFormat = sub; opts.height = Number($('ytQuality').value); }
   else { opts.subMode = sub; }
   opts.thumbnail = $('ytThumb2').checked;
-  try { const res = await window.api.ytDownload(opts); $('ytBar').style.width = '100%'; $('ytStatus').className = 'fr-status done'; $('ytStatus').textContent = `Done (${fmtBytes(res.outSize)}) — click to open`; $('ytStatus').onclick = () => res.outputPath && window.api.showItem(res.outputPath); toast('YouTube download complete', { path: res.outputPath }); }
+  try {
+    const res = await window.api.ytDownload(opts);
+    $('ytBar').style.width = '100%'; $('ytStatus').className = 'fr-status done';
+    $('ytStatus').textContent = res.outSize ? `Done (${fmtBytes(res.outSize)}) — click to open` : 'Done — click to open';
+    // Always clickable: open the file if we have its path, else open the folder.
+    $('ytStatus').onclick = () => { if (res.outputPath) window.api.showItem(res.outputPath); else if (state.outputDir) window.api.openPath(state.outputDir); };
+    if (res.outputPath) addRecent({ path: res.outputPath });
+    // Let the user play a downloaded video right here in the app.
+    if (mode === 'video' && res.outputPath) ytPlayFile(res.outputPath); else ytClosePreview();
+    toast('Download complete', res.outputPath ? { path: res.outputPath } : {});
+  }
   catch (err) { const c = String(err.message).includes('canceled'); $('ytStatus').className = c ? 'fr-status' : 'fr-status error'; $('ytStatus').textContent = c ? 'Canceled' : ('Error: ' + String(err.message).split('\n')[0]); }
   finally { yt.downloading = false; $('ytDownload').disabled = false; $('ytCancel').classList.add('hidden'); }
+}
+// Domains yt-dlp supports for this app. Host matches if it equals the domain
+// or ends with ".<domain>".
+const YT_DOMAINS = ['youtube.com', 'youtu.be', 'bilibili.com', 'bsky.app', 'dailymotion.com', 'dai.ly', 'facebook.com', 'fb.watch', 'instagram.com', 'loom.com', 'ok.ru', 'pinterest.com', 'pin.it', 'newgrounds.com', 'reddit.com', 'rutube.ru', 'snapchat.com', 'soundcloud.com', 'streamable.com', 'tiktok.com', 'tumblr.com', 'twitch.tv', 'twitter.com', 'x.com', 'vimeo.com', 'vk.com'];
+function ytHostOf(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  s = s.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, ''); // strip scheme
+  s = s.replace(/^www\./i, '');
+  s = s.split(/[/?#]/)[0]; // host up to first /, ? or #
+  return s.toLowerCase();
+}
+function ytUrlSupported(raw) {
+  const host = ytHostOf(raw);
+  if (!host) return true; // empty = not invalid
+  return YT_DOMAINS.some((d) => host === d || host.endsWith('.' + d));
+}
+function ytValidate() {
+  const inp = $('ytUrl'); if (!inp) return;
+  const val = inp.value.trim();
+  const ok = ytUrlSupported(val);
+  inp.classList.toggle('invalid', !ok && val.length > 0);
+  const fb = $('ytFetch'); if (fb) fb.disabled = (!ok && val.length > 0);
 }
 const YT_SERVICES = ['youtube', 'bilibili', 'bluesky', 'dailymotion', 'facebook', 'instagram', 'loom', 'ok', 'pinterest', 'newgrounds', 'reddit', 'rutube', 'snapchat', 'soundcloud', 'streamable', 'tiktok', 'tumblr', 'twitch clips', 'twitter', 'vimeo', 'vk'];
 function wireYoutube() {
   $('ytServicesChips').innerHTML = YT_SERVICES.map((s) => `<span class="yt-chip">${s}</span>`).join('');
   $('ytFetch').addEventListener('click', ytFetch);
   $('ytUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') ytFetch(); });
+  $('ytUrl').addEventListener('input', ytValidate);
   $('ytMode').addEventListener('change', ytRefreshSub);
   $('ytSub').addEventListener('change', ytRefreshQuality);
   $('ytDownload').addEventListener('click', ytDownload);
   $('ytCancel').addEventListener('click', () => window.api.ytCancel());
+  const pc = $('ytPreviewClose'); if (pc) pc.addEventListener('click', ytClosePreview);
   window.api.onYtProgress((p) => { $('ytProgress').classList.remove('hidden'); $('ytBar').style.width = `${(p.percent || 0).toFixed(1)}%`; $('ytStatus').textContent = p.phase === 'processing' ? 'Converting…' : `${(p.percent || 0).toFixed(0)}%`; });
+}
+
+// ---------- top-bar search (hover-expand, tag-aware) ----------
+// Index every item across the three registries: label, category name, kind, tags.
+let searchIndex = null;
+function buildSearchIndex() {
+  const out = [];
+  const groups = [
+    ['convert', window.CONVERT_CATEGORIES],
+    ['compress', window.COMPRESS_CATEGORIES],
+    ['tool', window.TOOL_CATEGORIES],
+  ];
+  for (const [kind, cats] of groups) {
+    if (!Array.isArray(cats)) continue;
+    for (const cat of cats) {
+      for (const item of (cat.items || [])) {
+        // Skip items unsupported by this build (mirrors the accordion's filter).
+        if (item.need && state.caps && !state.caps[item.need]) continue;
+        const tags = Array.isArray(item.tags) ? item.tags : [];
+        out.push({
+          item, kind,
+          label: item.label || '',
+          cat: cat.name || '',
+          tags,
+          // Precomputed lowercase haystacks for ranking.
+          lLabel: (item.label || '').toLowerCase(),
+          lCat: (cat.name || '').toLowerCase(),
+          lTags: tags.map((t) => String(t).toLowerCase()),
+        });
+      }
+    }
+  }
+  searchIndex = out;
+  return out;
+}
+// Score one entry against a lowercase query. Higher = better; <=0 = no match.
+function searchScore(e, q) {
+  let best = 0;
+  if (e.lLabel === q) best = Math.max(best, 1000);
+  else if (e.lLabel.startsWith(q)) best = Math.max(best, 800);
+  else if (e.lLabel.includes(q)) best = Math.max(best, 500);
+  // Tag matches (the other agent populates item.tags).
+  for (const t of e.lTags) {
+    if (t === q) best = Math.max(best, 700);
+    else if (t.startsWith(q)) best = Math.max(best, 600);
+    else if (t.includes(q)) best = Math.max(best, 400);
+  }
+  // Category hint match.
+  if (e.lCat.includes(q)) best = Math.max(best, 300);
+  if (e.kind.includes(q)) best = Math.max(best, 250);
+  // Multi-word: every whitespace-separated token must appear somewhere.
+  const toks = q.split(/\s+/).filter(Boolean);
+  if (toks.length > 1) {
+    const hay = e.lLabel + ' ' + e.lCat + ' ' + e.kind + ' ' + e.lTags.join(' ');
+    const all = toks.every((t) => hay.includes(t));
+    if (all) best = Math.max(best, 450);
+    else if (best < 1000) best = 0; // partial multi-word → drop unless a stronger single hit
+  }
+  // Light fuzzy fallback: query chars appear in order within the label.
+  if (best === 0 && q.length >= 3 && subseq(q, e.lLabel)) best = 120;
+  return best;
+}
+function subseq(q, s) { let i = 0; for (const ch of s) { if (ch === q[i]) i++; if (i === q.length) return true; } return i === q.length; }
+function searchQuery(raw) {
+  const q = String(raw || '').trim().toLowerCase();
+  if (!q) return [];
+  if (!searchIndex) buildSearchIndex();
+  return searchIndex
+    .map((e) => ({ e, s: searchScore(e, q) }))
+    .filter((r) => r.s > 0)
+    .sort((a, b) => b.s - a.s || a.e.lLabel.localeCompare(b.e.lLabel))
+    .slice(0, 10);
+}
+function renderSearchResults(results) {
+  const box = $('navSearchResults'); if (!box) return;
+  if (!results.length) { box.innerHTML = `<div class="navsearch-empty">no matches</div>`; box.classList.remove('hidden'); return; }
+  const kindLbl = { convert: 'convert', compress: 'compress', tool: 'tool' };
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  box.innerHTML = results.map((r, i) =>
+    `<button class="navsearch-opt" data-i="${i}"><span class="ns-label">${esc(r.e.label)}</span><span class="ns-hint">${esc(kindLbl[r.e.kind] || r.e.kind)} · ${esc(r.e.cat)}</span></button>`
+  ).join('');
+  box.classList.remove('hidden');
+  box.querySelectorAll('.navsearch-opt').forEach((el) => el.addEventListener('mousedown', (ev) => {
+    ev.preventDefault(); // keep focus until we route
+    const r = results[Number(el.dataset.i)]; if (r) searchOpen(r.e);
+  }));
+}
+// Route a chosen entry exactly like the accordion does (openItem handles special engines).
+function searchOpen(entry) {
+  searchCollapse(true);
+  openItem(entry.item, entry.kind);
+}
+function searchCollapse(clear) {
+  const wrap = $('navSearch'), inp = $('navSearchInput'), box = $('navSearchResults');
+  if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+  if (clear && inp) inp.value = '';
+  if (wrap && (!inp || !inp.value)) wrap.classList.remove('open');
+  if (inp) inp.blur();
+}
+function wireSearch() {
+  const wrap = $('navSearch'), btn = $('navSearchBtn'), inp = $('navSearchInput'), box = $('navSearchResults');
+  if (!wrap || !inp) return;
+  buildSearchIndex();
+  const run = () => { const r = searchQuery(inp.value); if (inp.value.trim()) renderSearchResults(r); else { box.classList.add('hidden'); box.innerHTML = ''; } };
+  btn.addEventListener('click', () => { wrap.classList.add('open'); inp.focus(); });
+  inp.addEventListener('focus', () => { wrap.classList.add('open'); if (inp.value.trim()) run(); });
+  inp.addEventListener('input', run);
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { searchCollapse(true); return; }
+    if (e.key === 'Enter') { const first = box.querySelector('.navsearch-opt'); if (first) first.dispatchEvent(new MouseEvent('mousedown')); }
+  });
+  // Collapse when empty + blurred; stay open while focused.
+  inp.addEventListener('blur', () => { setTimeout(() => { if (document.activeElement !== inp) searchCollapse(false); }, 120); });
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) searchCollapse(false); });
 }
 
 // ---------- Unit / Time ----------
@@ -707,6 +1829,42 @@ function toast(msg, opts) {
   return close;
 }
 
+// ---------- recents / downloads menu ----------
+const RECENTS_KEY = 'mtb_recents';
+function loadRecents() { try { return JSON.parse(localStorage.getItem(RECENTS_KEY)) || []; } catch { return []; } }
+function saveRecents(arr) { try { localStorage.setItem(RECENTS_KEY, JSON.stringify(arr.slice(0, 40))); } catch { /* */ } }
+function addRecent({ name, path }) {
+  if (!path) return;
+  let arr = loadRecents().filter((r) => r.path !== path);
+  arr.unshift({ name: name || baseName(path), path, at: Date.now() });
+  saveRecents(arr);
+  if ($('recentsPanel') && !$('recentsPanel').classList.contains('hidden')) renderRecents();
+}
+function dirOf(p) { return p.replace(/[\\/][^\\/]*$/, ''); }
+function renderRecents() {
+  const body = $('recentsBody'); if (!body) return;
+  const arr = loadRecents();
+  if (!arr.length) { body.innerHTML = `<div class="recent-empty">nothing yet</div>`; return; }
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  body.innerHTML = arr.map((r, i) => {
+    const playBtn = isPlayable(r.path) ? `<button class="recent-play" data-play="${i}" title="Play in app"><span class="ic">${icon('play')}</span></button>` : '';
+    return `<div class="recent-row" data-i="${i}"><button class="recent-open" data-open="${i}"><span class="recent-name">${esc(r.name)}</span><span class="recent-loc">${esc(dirOf(r.path))}</span></button>${playBtn}</div>`;
+  }).join('');
+  injectIcons(body);
+  body.querySelectorAll('[data-open]').forEach((el) => el.addEventListener('click', () => { const r = arr[Number(el.dataset.open)]; if (r) window.api.showItem(r.path); }));
+  body.querySelectorAll('[data-play]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const r = arr[Number(el.dataset.play)]; if (r) { openSpecial('youtube'); state.backTo = state.backTo || 'home'; ytPlayFile(r.path, r.name); toggleRecents(false); } }));
+}
+function toggleRecents(force) {
+  const p = $('recentsPanel'); if (!p) return;
+  const show = force != null ? force : p.classList.contains('hidden');
+  if (show) { renderRecents(); p.classList.remove('hidden'); } else p.classList.add('hidden');
+}
+function wireRecents() {
+  const btn = $('recentsBtn'); if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); toggleRecents(); });
+  const clr = $('recentsClear'); if (clr) clr.addEventListener('click', () => { saveRecents([]); renderRecents(); });
+  document.addEventListener('click', (e) => { const p = $('recentsPanel'); if (p && !p.classList.contains('hidden') && !p.contains(e.target) && e.target !== $('recentsBtn') && !$('recentsBtn').contains(e.target)) p.classList.add('hidden'); });
+}
+
 // ---------- titlebar ----------
 function wireTitlebar() {
   $('tbMin').addEventListener('click', () => window.api.winMinimize());
@@ -723,10 +1881,14 @@ const PERF_OPTS = [
 function perfRadios(current, cores, threads) {
   let h = PERF_OPTS.map(([v, l, d]) => `<label class="perf-opt"><input type="radio" name="perf" value="${v}" ${current === v ? 'checked' : ''}/><div><div class="perf-l">${l}</div><div class="perf-d">${d}</div></div></label>`).join('');
   const cur = current === 'custom' ? (threads || 1) : Math.max(1, Math.floor((cores || 4) / 2));
-  h += `<label class="perf-opt"><input type="radio" name="perf" value="custom" ${current === 'custom' ? 'checked' : ''}/><div style="flex:1">
+  const customOn = current === 'custom';
+  h += `<label class="perf-opt"><input type="radio" name="perf" value="custom" ${customOn ? 'checked' : ''}/><div style="flex:1">
       <div class="perf-l">Custom</div>
       <div class="perf-d">Pick exactly how many CPU threads to use.</div>
-      <div class="slider-row" style="margin-top:8px"><input type="range" id="perfThreads" min="1" max="${cores || 8}" value="${cur}"/><span class="slider-val"><input type="number" id="perfThreadsN" value="${cur}" min="1" max="${cores || 8}"/> / ${cores || '?'}</span></div>
+      <div class="perf-slider${customOn ? '' : ' hidden'}" id="perfSlider" style="margin-top:10px">
+        <input type="range" class="perf-range" id="perfThreads" min="1" max="${cores || 8}" value="${cur}"/>
+        <div class="perf-readout"><input type="number" id="perfThreadsN" value="${cur}" min="1" max="${cores || 8}"/><span class="perf-cores">/ ${cores || '?'} threads</span></div>
+      </div>
     </div></label>`;
   return h;
 }
@@ -748,12 +1910,8 @@ async function persist(patch) { state.settings = await window.api.setSettings(pa
 const SETTINGS_CATS = [
   ['appearance', 'appearance', 'settings'],
   ['accessibility', 'accessibility', 'user'],
-  ['video', 'video', 'video'],
-  ['audio', 'audio', 'audio'],
-  ['metadata', 'metadata', 'metadata'],
-  ['local', 'local processing', 'tools'],
-  ['instances', 'instances', 'others'],
-  ['privacy', 'privacy', 'lock'],
+  ['performance', 'performance', 'tools'],
+  ['downloads', 'downloads', 'download'],
   ['advanced', 'advanced', 'convert'],
 ];
 // ---------- reusable component builders (HTML-string helpers) ----------
@@ -763,122 +1921,33 @@ function seg(name, cur, opts, wrap) {
 function toggleRow(id, label, on, desc) {
   return `<div class="set-row"><div><div class="set-l">${label}</div>${desc ? `<div class="set-d">${desc}</div>` : ''}</div><button class="switch ${on ? 'on' : ''}" id="${id}"><span></span></button></div>`;
 }
-// Select row: label left, native select (enhanced to .cs) on the right. Supports disabled.
-function selectRow(id, label, cur, opts, disabled) {
-  const o = opts.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('');
-  return `<div class="sel-row ${disabled ? 'dis' : ''}" data-selrow="${id}"><div class="set-l">${label}</div><select id="${id}" ${disabled ? 'disabled' : ''}>${o}</select></div>`;
-}
 // Action button row: list of [id, label, iconName, destructive?]
 function actionRow(buttons) {
   return `<div class="action-row">${buttons.map(([id, l, ic, danger]) => `<button class="act-btn ${danger ? 'danger' : ''}" id="${id}">${ic ? `<span class="ic">${icon(ic)}</span>` : ''}${l}</button>`).join('')}</div>`;
 }
-// File preview card: list of [filename, secondaryLabel]
-function filePreviewCard(rows) {
-  return `<div class="fpc">${rows.map(([name, sub]) => `<div class="fpc-row"><span class="fpc-ic">${icon('others')}</span><div><div class="fpc-name">${name}</div><div class="fpc-sub">${sub}</div></div></div>`).join('')}</div>`;
-}
-function filenamePreviews(style) {
-  const map = {
-    classic: ['ytdl_a1B2c3D4.mp4', 'ytdl_a1B2c3D4.mp3'],
-    basic: ['Video Title - Video Author.mp4', 'Audio Title - Audio Author.mp3'],
-    pretty: ['Video Title - Video Author (1080p, h264).mp4', 'Audio Title - Audio Author.mp3'],
-    nerdy: ['Video Title - Video Author (1080p, h264, youtube).mp4', 'Audio Title - Audio Author (youtube).mp3'],
-  };
-  const [v, a] = map[style] || map.basic;
-  return filePreviewCard([[v, 'video file preview'], [a, 'audio file preview']]);
-}
-const LANGS = [['english', 'english'], ['spanish', 'spanish'], ['french', 'french'], ['german', 'german'], ['portuguese', 'portuguese'], ['russian', 'russian'], ['japanese', 'japanese'], ['chinese', 'chinese']];
-const SUB_LANGS = [['none', 'none'], ['english', 'english'], ['spanish', 'spanish'], ['french', 'french'], ['german', 'german'], ['japanese', 'japanese'], ['chinese', 'chinese']];
-const DUB_LANGS = [['original', 'original'], ['english', 'english'], ['spanish', 'spanish'], ['french', 'french'], ['german', 'german'], ['japanese', 'japanese']];
 function settingsHtml(cat, s) {
   if (cat === 'appearance') return `
     <h3 class="set-h">theme</h3>
     ${seg('theme', s.theme, [['auto', 'auto'], ['light', 'light'], ['dark', 'dark']])}
-    <p class="set-note">auto theme switches between light and dark themes depending on your device's display mode.</p>
-    <h3 class="set-h">language</h3>
-    ${toggleRow('setLangAuto', 'automatic selection', s.languageAutomatic, 'the app will use your system default language if a translation is available. if not, english will be used instead.')}
-    ${selectRow('setPrefLang', 'preferred language', s.preferredLanguage, LANGS, s.languageAutomatic)}
-    <p class="set-note">this language is used when automatic selection is disabled. any untranslated text is shown in english. some languages use community translations and may be incomplete.</p>`;
+    <p class="set-note">auto theme switches between light and dark themes depending on your device's display mode.</p>`;
 
   if (cat === 'accessibility') return `
     <h3 class="set-h">visual</h3>
     ${toggleRow('setMotion', 'reduce motion', s.reduceMotion, 'animations and transitions will be disabled whenever possible.')}
-    ${toggleRow('setTransp', 'reduce visual transparency', s.reduceTransparency, 'transparency of surfaces is reduced and blur effects are disabled. may also improve UI performance on less powerful devices.')}
-    <h3 class="set-h">behavior</h3>
-    ${toggleRow('setNoQueue', "don't open the queue automatically", s.dontOpenQueueAutomatically, 'the processing queue will not open automatically when a new item is added. progress is still shown and the queue can still be opened manually.')}`;
+    ${toggleRow('setTransp', 'reduce visual transparency', s.reduceTransparency, 'transparency of surfaces is reduced and blur effects are disabled. may also improve UI performance on less powerful devices.')}`;
 
-  if (cat === 'video') return `
-    <h3 class="set-h">video quality</h3>
-    ${seg('videoQuality', s.videoQuality, [['8k+', '8k+'], ['4k', '4k'], ['1440p', '1440p'], ['1080p', '1080p'], ['720p', '720p'], ['480p', '480p'], ['360p', '360p'], ['240p', '240p'], ['144p', '144p']], true)}
-    <p class="set-note">if the preferred video quality is not available, the next best quality is picked instead.</p>
-    <h3 class="set-h">preferred youtube video codec</h3>
-    ${seg('youtubeCodec', s.youtubeCodec, [['h264+aac', 'h264 + aac'], ['av1+opus', 'av1 + opus'], ['vp9+opus', 'vp9 + opus']])}
-    <p class="set-note">h264: best compatibility, average quality, max 1080p. av1: best quality/efficiency, supports 8k and HDR. vp9: same quality as av1 but ~2x bigger; supports 4k and HDR.</p>
-    <h3 class="set-h">youtube file container</h3>
-    ${seg('youtubeContainer', s.youtubeContainer, [['auto', 'auto'], ['mp4', 'mp4'], ['webm', 'webm'], ['mkv', 'mkv']])}
-    <p class="set-note">when auto is selected, the best container is picked from the codec: mp4 for h.264, webm for vp9/av1.</p>
-    <h3 class="set-h">high efficiency video codec</h3>
-    ${toggleRow('setH265', 'allow h.265 for videos', s.allowH265, 'allows downloading videos from platforms like tiktok in higher quality at the cost of compatibility.')}
-    <h3 class="set-h">twitter/x</h3>
-    ${toggleRow('setGif', 'convert looping videos to gif', s.convertLoopingVideosToGif, 'gif conversion is inefficient, so the converted file may be very large and low quality.')}`;
-
-  if (cat === 'audio') return `
-    <h3 class="set-h">audio format</h3>
-    ${seg('audioFormat', s.audioFormat, [['best', 'best'], ['mp3', 'mp3'], ['ogg', 'ogg'], ['wav', 'wav'], ['opus', 'opus']])}
-    <p class="set-note">all formats except best are converted from the source, so some quality loss may occur. when best is selected, audio is kept in its original format whenever possible.</p>
-    <h3 class="set-h">audio bitrate</h3>
-    ${seg('audioBitrate', s.audioBitrate, [['320kb/s', '320kb/s'], ['256kb/s', '256kb/s'], ['128kb/s', '128kb/s'], ['96kb/s', '96kb/s'], ['64kb/s', '64kb/s'], ['8kb/s', '8kb/s']], true)}
-    <p class="set-note">bitrate applies only when converting to a lossy format. the app can't improve source quality, so over 128kbps may grow the file with no audible difference.</p>
-    <h3 class="set-h">youtube audio quality</h3>
-    ${toggleRow('setBetterAudio', 'prefer better quality', s.preferBetterYoutubeAudio, 'the app will try to pick the highest quality audio in audio mode. may not be available depending on youtube and server status.')}
-    <h3 class="set-h">youtube audio track</h3>
-    ${selectRow('setDubLang', 'preferred dub language', s.preferredDubLanguage, DUB_LANGS)}
-    <p class="set-note">a dubbed audio track for the selected language is used if available. if not, the original audio is used.</p>
-    <h3 class="set-h">tiktok</h3>
-    ${toggleRow('setTikTokSound', 'download original sound', s.downloadOriginalTikTokSound, "the app will download the sound from the video without any changes by the post's author.")}`;
-
-  if (cat === 'metadata') return `
-    <h3 class="set-h">filename style</h3>
-    ${seg('filenameStyle', s.filenameStyle, [['classic', 'classic'], ['basic', 'basic'], ['pretty', 'pretty'], ['nerdy', 'nerdy']])}
-    <div id="fpcWrap">${filenamePreviews(s.filenameStyle)}</div>
-    <p class="set-note">filename style is only used for files tunneled through the app. some services only support the classic style.</p>
-    <h3 class="set-h">saving method</h3>
-    ${seg('savingMethod', s.savingMethod, [['ask', 'ask'], ['download', 'download'], ['share', 'share'], ['copy', 'copy']])}
-    <p class="set-note">preferred way of saving the file or link. if the preferred method is unavailable, the app will ask what to do next.</p>
-    <h3 class="set-h">subtitles</h3>
-    ${selectRow('setSubLang', 'preferred subtitle language', s.preferredSubtitleLanguage, SUB_LANGS)}
-    <p class="set-note">subtitles in the preferred language are added if available. some services have no language selection — the only available track is added if any language is selected.</p>
-    <h3 class="set-h">file metadata</h3>
-    ${toggleRow('setNoMeta', 'disable file metadata', s.disableFileMetadata, 'title, artist, and other info will not be added to the file.')}`;
-
-  if (cat === 'local') return `
-    <h3 class="set-h">local media processing</h3>
-    ${seg('localProcessing', s.localProcessing, [['disabled', 'disabled'], ['preferred', 'preferred'], ['forced', 'forced']])}
-    <p class="set-note">when downloading media, remuxing and transcoding are done on-device instead of in the cloud. detailed progress shows in the processing queue.</p>
-    <p class="set-note">disabled: local processing is not used. preferred: media needing extra processing goes through the queue, the rest downloads normally. forced: all media is proxied and downloaded through the queue.</p>
+  if (cat === 'performance') return `
     <h3 class="set-h">cpu usage limit</h3>
     <div class="perf-list">${perfRadios(s.performance, s.cores, s.threads)}</div>
-    <p class="set-note">${s.cores} cores detected.</p>
+    <p class="set-note">${s.cores} cores detected. this caps how hard the app pushes your CPU during encoding.</p>`;
+
+  if (cat === 'downloads') return `
     <h3 class="set-h">default download location</h3>
-    <div class="perf-list">${dlRadios(s.downloadLocation, s.customDownloadDir)}</div>`;
-
-  if (cat === 'instances') return `
-    <h3 class="set-h">community instances</h3>
-    ${toggleRow('setCustomServer', 'use a custom processing server', s.useCustomProcessingServer, 'the app will use a custom processing instance if you choose to. you are responsible for any instance you use.')}
-    <div class="inst-input ${s.useCustomProcessingServer ? '' : 'hidden'}" id="instUrlWrap"><input type="text" id="instUrl" placeholder="https://instance.example.com/" value="${(s.customProcessingServerUrl || '').replace(/"/g, '&quot;')}"/></div>
-    <p class="set-warn">be mindful of which instances you use — only use ones hosted by people you trust.</p>
-    <h3 class="set-h">instance access key</h3>
-    ${toggleRow('setUseKey', 'use an instance access key', s.useInstanceAccessKey, 'the app will use this key to make requests to the processing instance. make sure the instance supports api keys.')}
-    <div class="inst-input ${s.useInstanceAccessKey ? '' : 'hidden'}" id="instKeyWrap"><input type="text" id="instKey" placeholder="access key" value="${(s.instanceAccessKey || '').replace(/"/g, '&quot;')}"/></div>`;
-
-  if (cat === 'privacy') return `
-    <h3 class="set-h">tunneling</h3>
-    ${toggleRow('setTunnel', 'always tunnel files', s.alwaysTunnelFiles, 'hides your ip address and browser info, and bypasses local network restrictions. files also get readable filenames.')}
-    <h3 class="set-h">anonymous traffic analytics</h3>
-    ${toggleRow('setNoAnalytics', "don't contribute to analytics", s.dontContributeToAnalytics, 'anonymous traffic analytics estimate the approximate number of active users. no identifiable information is ever stored — data is anonymized and aggregated. the system is privacy-friendly, self-hosted, and cookie-free.')}`;
+    <div class="perf-list">${dlRadios(s.downloadLocation, s.customDownloadDir)}</div>
+    <p class="set-note">where converted, compressed, and downloaded files are saved by default. you can still override the output folder per job.</p>`;
 
   if (cat === 'advanced') return `
-    <h3 class="set-h">debug</h3>
-    ${toggleRow('setNerd', 'enable features for nerds', s.enableNerdFeatures, 'gives easy access to app info useful for debugging. enabling this does not affect app functionality.')}
+    <h3 class="set-h">about</h3>
     <div class="set-note">media toolbox v${s.appVersion || (state.caps && state.caps.appVersion) || '1.0.0'}</div>
     <h3 class="set-h">settings data</h3>
     ${actionRow([['setImport', 'import', 'download'], ['setExport', 'export', 'folder'], ['setReset', 'reset', 'trash', true]])}
@@ -924,51 +1993,18 @@ function confirmModal(title, body) {
 function wireSettingsCat(cat, s) {
   if (cat === 'appearance') {
     wireSeg('theme', 'theme');
-    wireToggle('setLangAuto', 'languageAutomatic', (on) => {
-      const row = document.querySelector('[data-selrow="setPrefLang"]'); const sel = $('setPrefLang');
-      if (row) row.classList.toggle('dis', on);
-      if (sel) sel.disabled = on;
-      enhanceSelects($('settingsContent'));
-    });
-    wireSelect('setPrefLang', 'preferredLanguage');
   } else if (cat === 'accessibility') {
     wireToggle('setMotion', 'reduceMotion');
     wireToggle('setTransp', 'reduceTransparency');
-    wireToggle('setNoQueue', 'dontOpenQueueAutomatically');
-  } else if (cat === 'video') {
-    wireSeg('videoQuality', 'videoQuality');
-    wireSeg('youtubeCodec', 'youtubeCodec');
-    wireSeg('youtubeContainer', 'youtubeContainer');
-    wireToggle('setH265', 'allowH265');
-    wireToggle('setGif', 'convertLoopingVideosToGif');
-  } else if (cat === 'audio') {
-    wireSeg('audioFormat', 'audioFormat');
-    wireSeg('audioBitrate', 'audioBitrate');
-    wireToggle('setBetterAudio', 'preferBetterYoutubeAudio');
-    wireSelect('setDubLang', 'preferredDubLanguage');
-    wireToggle('setTikTokSound', 'downloadOriginalTikTokSound');
-  } else if (cat === 'metadata') {
-    wireSeg('filenameStyle', 'filenameStyle', (v) => { const w = $('fpcWrap'); if (w) w.innerHTML = filenamePreviews(v); });
-    wireSeg('savingMethod', 'savingMethod');
-    wireSelect('setSubLang', 'preferredSubtitleLanguage');
-    wireToggle('setNoMeta', 'disableFileMetadata');
-  } else if (cat === 'local') {
-    wireSeg('localProcessing', 'localProcessing');
+  } else if (cat === 'performance') {
     syncPair('perfThreads', 'perfThreadsN');
-    document.querySelectorAll('#settingsContent input[name="perf"]').forEach((r) => r.addEventListener('change', () => { const v = r.value; persist(v === 'custom' ? { performance: 'custom', threads: Number(($('perfThreadsN') || {}).value) || 1 } : { performance: v }); }));
-    const tn = $('perfThreadsN'); if (tn) tn.addEventListener('change', () => { const r = document.querySelector('#settingsContent input[name="perf"][value="custom"]'); if (r) r.checked = true; persist({ performance: 'custom', threads: Number(tn.value) || 1 }); });
+    const toggleSlider = (v) => { const sl = $('perfSlider'); if (sl) sl.classList.toggle('hidden', v !== 'custom'); };
+    document.querySelectorAll('#settingsContent input[name="perf"]').forEach((r) => r.addEventListener('change', () => { const v = r.value; toggleSlider(v); persist(v === 'custom' ? { performance: 'custom', threads: Number(($('perfThreadsN') || {}).value) || 1 } : { performance: v }); }));
+    const tn = $('perfThreadsN'); if (tn) tn.addEventListener('change', () => { const r = document.querySelector('#settingsContent input[name="perf"][value="custom"]'); if (r) r.checked = true; toggleSlider('custom'); persist({ performance: 'custom', threads: Number(tn.value) || 1 }); });
+  } else if (cat === 'downloads') {
     document.querySelectorAll('#settingsContent input[name="dl"]').forEach((r) => r.addEventListener('change', () => persist({ downloadLocation: r.value })));
     const pick = $('dlPick'); if (pick) pick.addEventListener('click', async (e) => { e.preventDefault(); const d = await window.api.pickOutputDir(); if (d) { state._customDir = d; $('dlCustomDesc').textContent = d; const r = document.querySelector('#settingsContent input[name="dl"][value="custom"]'); if (r) r.checked = true; persist({ downloadLocation: 'custom', customDownloadDir: d }); } });
-  } else if (cat === 'instances') {
-    wireToggle('setCustomServer', 'useCustomProcessingServer', (on) => { const w = $('instUrlWrap'); if (w) w.classList.toggle('hidden', !on); });
-    const url = $('instUrl'); if (url) url.addEventListener('change', () => persist({ customProcessingServerUrl: url.value }));
-    wireToggle('setUseKey', 'useInstanceAccessKey', (on) => { const w = $('instKeyWrap'); if (w) w.classList.toggle('hidden', !on); });
-    const key = $('instKey'); if (key) key.addEventListener('change', () => persist({ instanceAccessKey: key.value }));
-  } else if (cat === 'privacy') {
-    wireToggle('setTunnel', 'alwaysTunnelFiles');
-    wireToggle('setNoAnalytics', 'dontContributeToAnalytics');
   } else if (cat === 'advanced') {
-    wireToggle('setNerd', 'enableNerdFeatures');
     $('setExport').addEventListener('click', async () => { const r = await window.api.exportSettings(); if (r && r.ok) toast('Settings exported', { path: r.filePath }); });
     $('setImport').addEventListener('click', async () => {
       const r = await window.api.importSettings();
@@ -1000,7 +2036,6 @@ async function openSettings(initial) {
   const renderCat = (c) => { $('settingsContent').innerHTML = settingsHtml(c, s); wireSettingsCat(c, s); };
   $('settingsBody').querySelectorAll('.set-cat').forEach((b) => b.addEventListener('click', () => { $('settingsBody').querySelectorAll('.set-cat').forEach((x) => x.classList.remove('on')); b.classList.add('on'); renderCat(b.dataset.cat); }));
   renderCat(cat);
-  $('settingsCores').textContent = '';
   $('settingsModal').classList.remove('hidden');
 }
 async function maybeFirstRun() {
@@ -1072,7 +2107,11 @@ function wireStretch() {
 
 // ---------- Profile (GitHub live) ----------
 const GH_USER = 'pipelinear';
+const GH_REPO = 'pipelinear/media-toolbox';
+const STAR_GOALS = [5, 10, 15, 25];
 let profileLoaded = false;
+let lastContribs = null;   // cached so the calendar can re-theme on reopen
+let lastStars = null;      // cached star count for the flight card
 function openProfile() {
   hideAll(); state.section = 'profile'; state.ws = null;
   document.body.classList.add('on-profile'); // hides hero, tightens layout
@@ -1080,7 +2119,13 @@ function openProfile() {
   $('profilePanel').classList.remove('hidden');
   $('ghLink').textContent = `github.com/${GH_USER}`;
   startPixelCanvas(); animateSignature();
+  retintPlayer();           // re-apply the album-art tint for the CURRENT theme (dark/light)
   if (!profileLoaded) loadGithub();
+  else {
+    // Re-render the theme-aware bits with cached data (e.g. after a theme switch).
+    if (lastContribs) renderCalendar(lastContribs);
+    if (lastStars != null) renderFlightCard(lastStars);
+  }
 }
 async function loadGithub() {
   try {
@@ -1089,20 +2134,75 @@ async function loadGithub() {
     if (u && u.login) { $('ghName').textContent = u.name || u.login; }
     if (u) $('ghStats').textContent = `${u.public_repos || 0} repos · ${u.followers || 0} followers · ${u.following || 0} following`;
   } catch { /* */ }
+  // Repo stars → flight status card. Offline-safe (handled in renderFlightCard).
+  try {
+    const repo = await (await fetch(`https://api.github.com/repos/${GH_REPO}`)).json();
+    lastStars = (repo && typeof repo.stargazers_count === 'number') ? repo.stargazers_count : null;
+  } catch { lastStars = null; }
+  renderFlightCard(lastStars);
   try {
     const data = await (await fetch(`https://github-contributions-api.jogruber.de/v4/${GH_USER}?y=last`)).json();
     renderCalendar((data && data.contributions) || []);
     profileLoaded = true;
   } catch { $('ghCal').innerHTML = '<span class="muted">Could not load contributions (offline?).</span>'; }
 }
+// Build the GitHub-stars "flight status" card. Maps stars onto the STAR_GOALS ladder.
+function renderFlightCard(stars) {
+  const el = $('ghFlight'); if (!el) return;
+  if (stars == null) { el.innerHTML = '<div class="gh-fl-offline muted">Star status unavailable (offline?).</div>'; return; }
+  const maxed = stars >= STAR_GOALS[STAR_GOALS.length - 1];
+  let origin, dest, pct;
+  if (maxed) {
+    origin = STAR_GOALS[STAR_GOALS.length - 1]; dest = origin; pct = 100;
+  } else {
+    const goal = STAR_GOALS.find((g) => stars < g);
+    origin = STAR_GOALS.filter((g) => g <= stars).pop() || 0;
+    dest = goal;
+    pct = dest > origin ? Math.max(0, Math.min(100, Math.round(((stars - origin) / (dest - origin)) * 100))) : 100;
+  }
+  const reduce = document.body.classList.contains('reduce-motion');
+  el.innerHTML = `
+    <div class="gh-fl-head">
+      <span class="gh-fl-label">star status</span>
+      <span class="gh-fl-pct">${pct}%</span>
+    </div>
+    <div class="gh-fl-track">
+      <span class="gh-fl-node gh-fl-from"><span class="gh-fl-star">★</span>${origin}</span>
+      <span class="gh-fl-line"><span class="gh-fl-fill" style="width:${reduce ? pct : 0}%"></span><span class="gh-fl-plane">✦</span></span>
+      <span class="gh-fl-node gh-fl-to"><span class="gh-fl-star">★</span>${maxed ? 'MAX' : dest}</span>
+    </div>
+    <div class="gh-fl-foot">
+      <span>${stars} ${stars === 1 ? 'star' : 'stars'}</span>
+      <span>${maxed ? 'all goals reached' : `next goal · ${dest}`}</span>
+    </div>`;
+  if (!reduce) {
+    const fill = el.querySelector('.gh-fl-fill');
+    const plane = el.querySelector('.gh-fl-plane');
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (fill) fill.style.width = pct + '%';
+      if (plane) plane.style.left = pct + '%';
+    }));
+  } else {
+    const plane = el.querySelector('.gh-fl-plane'); if (plane) plane.style.left = pct + '%';
+  }
+}
 function renderCalendar(contribs) {
-  const levels = ['#ebedf0', '#9be9a8', '#40c463', '#30a14e', '#216e39'];
+  lastContribs = contribs;
+  const dark = document.body.dataset.theme === 'dark';
+  // Theme-aware palette: dark empty cell + a green ramp that reads on the dark canvas.
+  const levels = dark
+    ? ['#26262e', '#0e4429', '#006d32', '#26a641', '#39d353']
+    : ['#ebedf0', '#9be9a8', '#40c463', '#30a14e', '#216e39'];
   // group into weeks (columns of 7)
   const cells = contribs.map((c) => `<span class="gh-day" title="${c.date}: ${c.count}" style="background:${levels[c.level] || levels[0]}"></span>`).join('');
   $('ghCal').innerHTML = `<div class="gh-grid">${cells}</div>`;
 }
 function animateSignature() {
   const p = $('sigPath'); if (!p) return;
+  // Theme-aware stroke: white on the dark canvas; a non-black accent (--link) in light mode.
+  const dark = document.body.dataset.theme === 'dark';
+  const link = getComputedStyle(document.body).getPropertyValue('--link').trim() || '#0071bb';
+  p.setAttribute('stroke', dark ? '#ffffff' : link);
   const len = p.getTotalLength();
   p.style.transition = 'none'; p.style.strokeDasharray = len; p.style.strokeDashoffset = len;
   void p.getBoundingClientRect();
@@ -1123,6 +2223,10 @@ function startPixelCanvas() {
   const gap = 14, radius = 90;
   function draw() {
     if (c.width !== panel.clientWidth || c.height !== panel.clientHeight) size();
+    // Theme-aware dots: light on the dark canvas, dark in light mode.
+    const dark = document.body.dataset.theme === 'dark';
+    const dot = dark ? '241,241,239' : '15,14,18';
+    const faint = dark ? 'rgba(241,241,239,0.08)' : 'rgba(0,0,0,0.06)';
     ctxp.clearRect(0, 0, c.width, c.height);
     for (let y = gap / 2; y < c.height; y += gap) {
       for (let x = gap / 2; x < c.width; x += gap) {
@@ -1130,10 +2234,10 @@ function startPixelCanvas() {
         if (d < radius) {
           const t = 1 - d / radius;            // 0..1 falloff
           const s = 1.5 + t * 3;               // grow toward cursor (smaller, denser)
-          ctxp.fillStyle = `rgba(15,14,18,${(0.12 + t * 0.78).toFixed(2)})`;
+          ctxp.fillStyle = `rgba(${dot},${(0.12 + t * 0.78).toFixed(2)})`;
           ctxp.fillRect(x - s / 2, y - s / 2, s, s);
         } else {
-          ctxp.fillStyle = 'rgba(0,0,0,0.06)'; // faint dots everywhere
+          ctxp.fillStyle = faint;              // faint dots everywhere
           ctxp.fillRect(x - 1, y - 1, 2, 2);
         }
       }
@@ -1149,6 +2253,8 @@ function startPixelCanvas() {
 const PLAYLIST = [
   { src: '../songs/song.mp3', title: 'You Are in My System', cover: '../songs/cover.jpg' },
 ];
+// Exposed so openProfile() can re-tint the player for the current theme when About opens.
+let retintPlayer = () => {};
 function wireAudioPlayer() {
   const a = $('apAudio'); if (!a) return;
   const fmt = (s) => { s = s || 0; const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, '0')}`; };
@@ -1182,15 +2288,17 @@ function wireAudioPlayer() {
     tintFromCover(tr.cover);
     if (autoplay) {
       a.volume = 0;                            // reset so a previous end-fade can't leave it muted
-      a.play().then(() => fadeTo(1, 700)).catch(() => {});
+      a.play().then(() => fadeTo(1, 1000)).catch(() => {});
     }
   }
 
-  // Average the cover's pixels → a heavy white-tinted card bg; flip text to dark ink.
+  // Average the cover's pixels → a tinted card bg. Light mode tints toward white;
+  // dark mode tints toward a dark shade so the card stays dark (not white) with light text.
   function tintFromCover(src) {
     const card = document.querySelector('.aplayer');
     const apply = (rgb) => { if (card) card.style.background = rgb; };
-    const fallback = () => apply('#f0f1f3');
+    const dark = () => document.body.dataset.theme === 'dark';
+    const fallback = () => apply(dark() ? '#1c1c22' : '#f0f1f3');
     const img = new Image();
     img.onload = () => {
       try {
@@ -1201,9 +2309,16 @@ function wireAudioPlayer() {
         let r = 0, gg = 0, b = 0, n = 0;
         for (let p = 0; p < d.length; p += 4) { r += d[p]; gg += d[p + 1]; b += d[p + 2]; n++; }
         r /= n; gg /= n; b /= n;
-        const mix = 0.82;                        // ~82% toward white for a whiter card
-        const tr = Math.round(r + (255 - r) * mix), tg = Math.round(gg + (255 - gg) * mix), tb = Math.round(b + (255 - b) * mix);
-        apply(`rgb(${tr}, ${tg}, ${tb})`);
+        if (dark()) {
+          // Mix ~80% toward a near-black so a hint of the cover hue survives.
+          const mix = 0.80, base = 22;           // base ≈ #16
+          const tr = Math.round(r * (1 - mix) + base * mix), tg = Math.round(gg * (1 - mix) + base * mix), tb = Math.round(b * (1 - mix) + base * mix);
+          apply(`rgb(${tr}, ${tg}, ${tb})`);
+        } else {
+          const mix = 0.82;                      // ~82% toward white for a whiter card
+          const tr = Math.round(r + (255 - r) * mix), tg = Math.round(gg + (255 - gg) * mix), tb = Math.round(b + (255 - b) * mix);
+          apply(`rgb(${tr}, ${tg}, ${tb})`);
+        }
       } catch { fallback(); }
     };
     img.onerror = fallback;
@@ -1213,13 +2328,18 @@ function wireAudioPlayer() {
   const setPlayIcon = () => { $('apPlay').querySelector('.ic').innerHTML = icon(a.paused ? 'play' : 'pause'); };
 
   $('apPlay').addEventListener('click', () => {
-    if (a.paused) { a.volume = 0; a.play().then(() => fadeTo(1, 700)).catch(() => {}); }
-    else a.pause();
+    if (a.paused) {
+      endFading = false;
+      a.volume = 0; a.play().then(() => fadeTo(1, 1000)).catch(() => {});   // fade in over 1s
+    } else {
+      endFading = true;                                  // block the timeupdate end-fade from fighting us
+      fadeTo(0, 1000, () => { a.pause(); endFading = false; });            // fade out over 1s, then pause
+    }
   });
   a.addEventListener('play', setPlayIcon); a.addEventListener('pause', setPlayIcon);
 
   a.addEventListener('ended', () => {
-    if ($('apRepeat').classList.contains('active')) { a.currentTime = 0; a.volume = 0; a.play().then(() => fadeTo(1, 700)).catch(() => {}); }
+    if ($('apRepeat').classList.contains('active')) { a.currentTime = 0; a.volume = 0; a.play().then(() => fadeTo(1, 1000)).catch(() => {}); }
     else loadTrack(current + 1, true);           // advance; wraps to 0 at the end
   });
 
@@ -1249,6 +2369,9 @@ function wireAudioPlayer() {
   $('apNext').addEventListener('click', () => {
     fadeTo(0, 250, () => loadTrack(current + 1, true));   // wraps to first track
   });
+
+  // Re-tint the current track's cover (used when About opens so the live theme is honored).
+  retintPlayer = () => tintFromCover(PLAYLIST[current].cover);
 
   loadTrack(0, false);
 }
@@ -1309,12 +2432,11 @@ async function init() {
   $('logoIcon').innerHTML = icon('home'); injectIcons(document);
   $('homeBtn').addEventListener('click', showHome);
   $('profileBtn').addEventListener('click', openProfile);
-  $('settingsBtn').addEventListener('click', openSettings);
-  document.querySelectorAll('.home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') openMetaEditor(); else if (c.dataset.tool === 'downloader') openSpecial('youtube'); else showSection(c.dataset.section); }));
+  $('settingsBtn').addEventListener('click', () => openSettings('appearance'));
+  document.querySelectorAll('.home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else showSection(c.dataset.section); }));
   wireTitlebar(); wireStretch(); wireMetaEditor();
   $('settingsClose').addEventListener('click', () => $('settingsModal').classList.add('hidden'));
   $('settingsModal').addEventListener('click', (e) => { if (e.target === $('settingsModal')) $('settingsModal').classList.add('hidden'); });
-  $('settingsSave').addEventListener('click', () => $('settingsModal').classList.add('hidden'));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { ['settingsModal', 'modalOverlay'].forEach((id) => $(id).classList.add('hidden')); } });
   $('setupSave').addEventListener('click', finishSetup);
   $('ghLink').addEventListener('click', (e) => { e.preventDefault(); window.api.openExternal(`https://github.com/${GH_USER}`); });
@@ -1322,14 +2444,14 @@ async function init() {
   $('btnAdd').addEventListener('click', pick);
   $('btnAdd2').addEventListener('click', pick);
   $('btnCompress').addEventListener('click', runActive);
-  $('btnCancelAll').addEventListener('click', () => window.api.cancelAll());
+  $('btnCancelAll').addEventListener('click', () => { if ($('btnCancelAll').classList.contains('inert')) return; window.api.cancelAll(); });
   $('btnOutDir').addEventListener('click', async () => { const d = await window.api.pickOutputDir(); if (d) { state.outputDir = d; $('outDirLabel').textContent = d; } });
   $('backBtn').addEventListener('click', backToMenu);
   $('modalClose').addEventListener('click', closeModal);
   $('modalOverlay').addEventListener('click', (e) => { if (e.target === $('modalOverlay')) closeModal(); });
   $('modalApply').addEventListener('click', applyModal);
   $('modalReset').addEventListener('click', () => { const e = findEntry(state.modalJobId); if (e) { const of = e.settings.outputFormat; e.settings = { ...defaultSettingsFor(e.mediaType), ...(state.ws ? state.ws.base : {}) }; e.settings.outputFormat = of; $('modalBody').innerHTML = buildModalBody(e); wireModalBody(e); injectIcons($('modalBody')); } });
-  wireDnd(); wireJobEvents(); wireYoutube(); wireColorPicker(); unitInit(); timeInit(); wireAudioPlayer();
+  wireDnd(); wireJobEvents(); wireYoutube(); wireColorPicker(); wireRecents(); wireSearch(); unitInit(); timeInit(); wireAudioPlayer();
   enhanceSelects(document);
   // Single-instance "open another?" prompt.
   window.api.onSecondInstance(() => $('instanceModal').classList.remove('hidden'));

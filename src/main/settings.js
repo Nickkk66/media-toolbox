@@ -30,41 +30,10 @@ function limitsFor(level) {
 
 function defaults() {
   return {
-    // --- existing / real behavior (KEEP) ---
+    // Only real, functional settings. Everything here actually controls behavior.
     firstRun: true, performance: 'recommended', downloadLocation: 'downloads', customDownloadDir: '',
     theme: 'auto', reduceMotion: false, reduceTransparency: false,
     ...limitsFor('recommended'),
-
-    // --- appearance ---
-    languageAutomatic: true, preferredLanguage: 'english',
-
-    // --- accessibility ---
-    dontOpenQueueAutomatically: false,
-
-    // --- video ---
-    videoQuality: '1080p', youtubeCodec: 'h264+aac', youtubeContainer: 'auto',
-    allowH265: false, convertLoopingVideosToGif: true,
-
-    // --- audio ---
-    audioFormat: 'mp3', audioBitrate: '128kb/s', preferBetterYoutubeAudio: false,
-    preferredDubLanguage: 'original', downloadOriginalTikTokSound: false,
-
-    // --- metadata ---
-    filenameStyle: 'basic', savingMethod: 'download', preferredSubtitleLanguage: 'none',
-    disableFileMetadata: false,
-
-    // --- local processing ---
-    localProcessing: 'preferred',
-
-    // --- instances ---
-    useCustomProcessingServer: false, customProcessingServerUrl: '',
-    useInstanceAccessKey: false, instanceAccessKey: '',
-
-    // --- privacy ---
-    alwaysTunnelFiles: false, dontContributeToAnalytics: false,
-
-    // --- advanced ---
-    enableNerdFeatures: false,
   };
 }
 

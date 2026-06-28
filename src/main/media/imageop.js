@@ -11,7 +11,7 @@ const extensions = ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'tif'];
 const outputFormats = [{ value: 'keep', label: 'Same as input' }, { value: 'png', label: 'PNG' }, { value: 'jpg', label: 'JPG' }];
 
 function defaultSettings() {
-  return { op: 'resize', outputFormat: 'keep', width: 1280, height: 0, angle: 90, flip: 'h', factor: 2, cropW: 0, cropH: 0, cropX: 0, cropY: 0 };
+  return { op: 'resize', outputFormat: 'keep', width: 1280, height: 0, angle: 90, flip: 'h', factor: 2, cropW: 0, cropH: 0, cropX: 0, cropY: 0, algo: 'lanczos' };
 }
 function outExt(settings, inputPath) {
   if (settings.outputFormat && settings.outputFormat !== 'keep') return settings.outputFormat;
@@ -40,6 +40,13 @@ function vfFor(settings) {
     }
     case 'enlarge': {
       const f = Number(settings.factor) || 2;
+      return `scale=iw*${f}:ih*${f}:flags=lanczos`;
+    }
+    case 'upscale': {
+      // High-quality explicit upscaler. lanczos = photographic; xbr = pixel-art
+      // edge-preserving (only integer 2/3/4 factors are supported by xbr).
+      const f = Math.min(4, Math.max(2, Number(settings.factor) || 2));
+      if (settings.algo === 'xbr') return `xbr=${f}`;
       return `scale=iw*${f}:ih*${f}:flags=lanczos`;
     }
     case 'rotate': {

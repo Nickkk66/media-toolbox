@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
   pauseJob: (jobId) => ipcRenderer.invoke('job:pause', jobId),
   resumeJob: (jobId) => ipcRenderer.invoke('job:resume', jobId),
   deleteFile: (p) => ipcRenderer.invoke('fs:delete', p),
+  filesRename: (renames) => ipcRenderer.invoke('files:rename', renames),
   newWindow: () => ipcRenderer.invoke('win:new'),
   onSecondInstance: (cb) => ipcRenderer.on('app:second-instance', () => cb()),
   metaRead: (inputPath) => ipcRenderer.invoke('meta:read', inputPath),

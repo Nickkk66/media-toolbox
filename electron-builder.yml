@@ -32,6 +32,12 @@ extraResources:
     filter:
       - "*.exe"
       - "*.dll"
+  # exiftool.exe REQUIRES its exiftool_files/ folder beside it — bundle both.
+  - from: vendor/exiftool
+    to: exiftool
+    filter:
+      - "exiftool.exe"
+      - "exiftool_files/**"
 
 win:
   target:

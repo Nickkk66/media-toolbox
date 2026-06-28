@@ -62,6 +62,7 @@ function registerIpc(getWindow) {
     hasYtdlp: ffmpegPath.hasYtdlp(),
     hasSevenzip: ffmpegPath.hasSevenzip(),
     hasQpdf: ffmpegPath.hasQpdf(),
+    hasExiftool: ffmpegPath.hasExiftool(),
     appVersion: (() => { try { return app.getVersion(); } catch { return '1.0.0'; } })(),
   }));
 
@@ -69,7 +70,19 @@ function registerIpc(getWindow) {
   let ytController = null;
   ipcMain.handle('yt:info', (_e, url) => youtube.info(url));
   ipcMain.handle('yt:download', async (_e, opts) => {
-    const outputDir = opts.outputDir || require('os').homedir();
+    // Resolve the output dir the same way conversions do (resolveOutputDir):
+    // honor a per-session folder, else the saved default download location,
+    // else the real Downloads folder (falling back to homedir if unavailable).
+    let outputDir = opts.outputDir;
+    if (!outputDir) {
+      const s = settings.load();
+      if (s.downloadLocation === 'custom' && s.customDownloadDir) {
+        outputDir = s.customDownloadDir;
+      } else {
+        try { outputDir = app.getPath('downloads'); }
+        catch { outputDir = require('os').homedir(); }
+      }
+    }
     ytController = youtube.download({ ...opts, outputDir }, (p) => send('yt:progress', p));
     try {
       const res = await ytController.promise;
@@ -163,6 +176,36 @@ function registerIpc(getWindow) {
     return { outputPath: out, outSize };
   });
 
+  // Batch rename: rename a set of files on disk. Each item is { from, to }
+  // where `to` is a NEW basename (kept in the same directory as `from`).
+  // Safe: skips when source is missing or the target already exists; never
+  // overwrites, never escapes the source directory.
+  ipcMain.handle('files:rename', async (_e, renames) => {
+    const results = [];
+    const claimed = new Set(); // targets produced earlier in this batch
+    for (const r of (renames || [])) {
+      const from = r && r.from;
+      let to = r && r.to;
+      try {
+        if (!from || !to) throw new Error('bad input');
+        const dir = path.dirname(from);
+        // Force same-directory, name-only (strip any path separators in `to`).
+        to = path.basename(String(to)).replace(/[\\/:*?"<>|]/g, '_');
+        if (!to) throw new Error('empty name');
+        const target = path.join(dir, to);
+        if (target === from) { results.push({ ok: true, from, to: target, skipped: true }); continue; }
+        if (!fs.existsSync(from)) throw new Error('missing source');
+        if (fs.existsSync(target) || claimed.has(target.toLowerCase())) throw new Error('name exists');
+        fs.renameSync(from, target);
+        claimed.add(target.toLowerCase());
+        results.push({ ok: true, from, to: target });
+      } catch (err) {
+        results.push({ ok: false, from, to, error: String(err && err.message || err) });
+      }
+    }
+    return { results };
+  });
+
   ipcMain.handle('job:cancel', (_e, jobId) => { queue.cancel(jobId); return true; });
   ipcMain.handle('job:cancelAll', () => { queue.cancelAll(); return true; });
   ipcMain.handle('job:pause', (_e, jobId) => queue.pause(jobId));
@@ -185,27 +228,173 @@ function registerIpc(getWindow) {
   // ---- Metadata editor ----
   const { execFile } = require('child_process');
   const META_KEYS = ['title', 'artist', 'album', 'album_artist', 'composer', 'genre', 'date', 'track', 'comment', 'description'];
-  ipcMain.handle('meta:read', (_e, inputPath) => new Promise((resolve, reject) => {
-    execFile(ffmpegPath.ffprobe, ['-v', 'error', '-print_format', 'json', '-show_format', inputPath],
+
+  // Image extensions exiftool handles for the rich EXIF/IPTC/XMP/ICC editor.
+  const IMAGE_META_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'tif', 'jfif', 'heic', 'heif', 'gif', 'avif', 'dng', 'cr2', 'cr3', 'nef', 'arw', 'orf', 'rw2', 'raf'];
+  // Groups whose tags are computed/derived from the file — show but don't edit.
+  const READONLY_META_GROUPS = new Set(['File', 'Composite', 'ExifTool']);
+
+  function prettifyTag(tag) {
+    // 'GPSLatitudeRef' -> 'GPS Latitude Ref', 'ImageWidth' -> 'Image Width'.
+    return String(tag)
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+      .replace(/_/g, ' ')
+      .trim();
+  }
+
+  // File-system info shared by both the ffprobe and exiftool read paths.
+  function readFileInfo(inputPath) {
+    try {
+      const st = fs.statSync(inputPath);
+      return {
+        sizeBytes: st.size,
+        sizeOnDisk: Math.ceil(st.size / 4096) * 4096,
+        createdMs: st.birthtimeMs,
+        modifiedMs: st.mtimeMs,
+        accessedMs: st.atimeMs,
+        readOnly: !(st.mode & 0o200),
+      };
+    } catch { return null; }
+  }
+
+  // Image metadata via exiftool: every grouped tag (incl. unknown/dup), split
+  // into an editable list (EXIF/IPTC/XMP/ICC/GPS/JFIF/MakerNotes/...) and a
+  // read-only list (File/Composite/ExifTool — computed/file fields).
+  function readImageMeta(inputPath) {
+    return new Promise((resolve, reject) => {
+      execFile(ffmpegPath.exiftool, ['-json', '-G', '-a', '-u', inputPath],
+        { windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) => {
+          if (err && !stdout) return reject(new Error('Could not read image metadata.'));
+          let arr = [];
+          try { arr = JSON.parse(stdout) || []; } catch { /* */ }
+          const obj = arr[0] || {};
+          const editable = [];
+          const readonly = [];
+          for (const fullKey of Object.keys(obj)) {
+            if (fullKey === 'SourceFile') continue;
+            const sep = fullKey.indexOf(':');
+            const group = sep > 0 ? fullKey.slice(0, sep) : 'Other';
+            const tag = sep > 0 ? fullKey.slice(sep + 1) : fullKey;
+            let value = obj[fullKey];
+            // exiftool can return objects/arrays for structured tags — flatten.
+            if (value != null && typeof value === 'object') value = JSON.stringify(value);
+            value = value == null ? '' : String(value);
+            const label = prettifyTag(tag);
+            if (READONLY_META_GROUPS.has(group)) {
+              readonly.push({ label: `${group} · ${label}`, value });
+            } else {
+              editable.push({ key: fullKey, label, group, value });
+            }
+          }
+          resolve({ kind: 'image', editable, readonly, hasExiftool: true, fileInfo: readFileInfo(inputPath) });
+        });
+    });
+  }
+
+  ipcMain.handle('meta:read', (_e, inputPath) => {
+    const ext = (path.extname(inputPath || '').replace('.', '') || '').toLowerCase();
+    if (IMAGE_META_EXTS.includes(ext) && ffmpegPath.hasExiftool()) {
+      return readImageMeta(inputPath);
+    }
+    return readAvMeta(inputPath);
+  });
+
+  // Audio/video metadata via ffprobe (unchanged behavior).
+  const readAvMeta = (inputPath) => new Promise((resolve, reject) => {
+    // Read BOTH container-level (format) and per-stream tags. For MP4/MKV the
+    // real tags (creation_time, encoder, handler_name, language, title…) often
+    // live on the streams, not the container, so we must merge them.
+    execFile(ffmpegPath.ffprobe, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', inputPath],
       { windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
         if (err) return reject(new Error('Could not read this file.'));
-        let tags = {};
-        try { tags = (JSON.parse(stdout).format || {}).tags || {}; } catch { /* */ }
-        // Normalize keys to lowercase.
-        const norm = {}; for (const k of Object.keys(tags)) norm[k.toLowerCase()] = tags[k];
-        // Surface every standard key plus any extra tag the file already carries.
+        let parsed = {};
+        try { parsed = JSON.parse(stdout) || {}; } catch { /* */ }
+        // Merge every tag source into one lowercased object. Streams are merged
+        // first (first-seen value kept for stream-only keys), then format-level
+        // tags are applied last so they win on conflict.
+        const norm = {};
+        const mergeFirst = (tags) => { if (!tags) return; for (const k of Object.keys(tags)) { const lk = k.toLowerCase(); if (!(lk in norm)) norm[lk] = tags[k]; } };
+        for (const s of (parsed.streams || [])) mergeFirst(s.tags);
+        const fmtTags = (parsed.format || {}).tags || {};
+        for (const k of Object.keys(fmtTags)) norm[k.toLowerCase()] = fmtTags[k];
+        // Union of the standard keys plus every merged key the file carries.
         const keys = [...META_KEYS];
         for (const k of Object.keys(norm)) if (!keys.includes(k)) keys.push(k);
-        resolve({ tags: norm, keys });
+        // Detect the media kind from the first ffprobe stream codec_type.
+        let codecType = null;
+        for (const s of (parsed.streams || [])) { if (s.codec_type === 'video') { codecType = 'video'; break; } if (s.codec_type === 'audio') codecType = codecType || 'audio'; }
+        const hasAudio = (parsed.streams || []).some((s) => s.codec_type === 'audio');
+        const kind = codecType === 'video' ? 'video' : 'audio';
+        resolve({ kind, tags: norm, keys, codecType, hasAudio, fileInfo: readFileInfo(inputPath) });
       });
-  }));
-  ipcMain.handle('meta:write', async (_e, { inputPath, tags, scrub, outputDir }) => {
+  });
+  const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'tif', 'jfif', 'gif'];
+
+  // Image metadata write via exiftool: produces a NEW MTB_ copy and never
+  // touches the original. Only changed group-qualified tags are written; scrub
+  // / clearGps map to exiftool's -all= / -gps:all= deletions.
+  async function writeImageMeta({ inputPath, tags, scrub, clearGps, dir }) {
+    const parsed = path.parse(inputPath);
+    const ext = (parsed.ext.replace('.', '') || 'jpg').toLowerCase();
+    const out = uniqueOutput(dir, parsed.name, ext, true);
+    const args = [];
+    if (scrub) {
+      // Strip everything.
+      args.push('-all=');
+    } else {
+      if (clearGps) { args.push('-gps:all='); args.push('-xmp:geotag='); }
+      // Each changed editable tag is 'Group:Tag' -> value.
+      if (tags) for (const [k, v] of Object.entries(tags)) { args.push(`-${k}=${v == null ? '' : v}`); }
+    }
+    // -o writes a new file (the original stays untouched). uniqueOutput already
+    // guarantees `out` does not exist, so -o will create it.
+    args.push('-o', out, inputPath);
+    await new Promise((resolve, reject) => {
+      execFile(ffmpegPath.exiftool, args, { windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (err, _o, stderr) => {
+        // exiftool exits non-zero on warnings even when the copy succeeded —
+        // treat the call as failed only if the output file was not produced.
+        if (!fs.existsSync(out)) return reject(new Error((stderr || (err && err.message) || 'exiftool failed').split('\n')[0]));
+        resolve();
+      });
+    });
+    let outSize = 0; try { outSize = fs.statSync(out).size; } catch { /* */ }
+    return { outputPath: out, outSize };
+  }
+
+  ipcMain.handle('meta:write', async (_e, { inputPath, kind, tags, scrub, outputDir, clearGps, clearCreation, removeAudio }) => {
     const parsed = path.parse(inputPath);
     const dir = resolveOutputDir({ outputDir }, parsed.dir);
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
-    const out = uniqueOutput(dir, parsed.name, parsed.ext.replace('.', '') || 'mp4', true);
-    const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', inputPath, '-map', '0', '-c', 'copy'];
-    if (scrub) args.push('-map_metadata', '-1');
+    const ext = (parsed.ext.replace('.', '') || 'mp4').toLowerCase();
+    const isImage = IMAGE_EXTS.includes(ext);
+    // Images go through exiftool when available (rich EXIF/IPTC/XMP/ICC editing).
+    if ((kind === 'image' || isImage) && ffmpegPath.hasExiftool()) {
+      return writeImageMeta({ inputPath, tags, scrub, clearGps, dir });
+    }
+    const out = uniqueOutput(dir, parsed.name, ext, true);
+    // Images: -map 0 + -c copy isn't meaningful; encode the single still and let
+    // -map_metadata -1 strip everything when scrubbing GPS/creation/metadata.
+    const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', inputPath];
+    if (!isImage) args.push('-map', '0');
+    if (removeAudio) args.push('-an');
+    args.push('-c', 'copy');
+    if (scrub || (isImage && (clearGps || clearCreation))) {
+      args.push('-map_metadata', '-1');
+    }
+    // Keys to clear (set to empty value so ffmpeg drops them on the copy).
+    const clearKeys = [];
+    if (clearGps) clearKeys.push(
+      'location', 'location-eng', 'com.apple.quicktime.location.ISO6709',
+      'com.apple.quicktime.location.accuracy.horizontal', 'GPS', 'GPSLatitude',
+      'GPSLongitude', 'GPSAltitude', 'GPSCoordinates'
+    );
+    if (clearCreation) clearKeys.push(
+      'encoder', 'creation_time', 'com.apple.quicktime.make',
+      'com.apple.quicktime.model', 'com.apple.quicktime.software',
+      'handler_name', 'vendor_id'
+    );
+    for (const k of clearKeys) args.push('-metadata', `${k}=`);
     if (tags) for (const [k, v] of Object.entries(tags)) { if (v != null && String(v).length) args.push('-metadata', `${k}=${v}`); }
     args.push(out);
     await new Promise((resolve, reject) => {

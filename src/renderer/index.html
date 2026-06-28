@@ -20,11 +20,22 @@
     <header class="appbar">
       <div class="brand"><span class="logo" id="logoIcon"></span> media toolbox</div>
       <nav class="mainnav" id="mainnav">
+        <div class="navsearch" id="navSearch">
+          <button class="navsearch-btn" id="navSearchBtn" title="Search" aria-label="Search"><span class="ic" data-icon="search"></span></button>
+          <input class="navsearch-input" id="navSearchInput" type="text" placeholder="Search tools…" autocomplete="off" spellcheck="false" />
+          <div class="navsearch-results hidden" id="navSearchResults"></div>
+        </div>
         <button class="nav-btn" id="homeBtn"><span class="ic" data-icon="home"></span> Home</button>
-        <button class="nav-btn" id="profileBtn"><span class="ic" data-icon="user"></span> Profile</button>
+        <button class="nav-btn" id="recentsBtn"><span class="ic" data-icon="download"></span> Downloads</button>
+        <button class="nav-btn" id="profileBtn"><span class="ic" data-icon="user"></span> About</button>
         <button class="nav-btn" id="settingsBtn"><span class="ic" data-icon="settings"></span> Settings</button>
       </nav>
     </header>
+
+    <div id="recentsPanel" class="recents-panel hidden">
+      <div class="recents-head"><span>recent files</span><button id="recentsClear" class="recents-clear">clear all</button></div>
+      <div id="recentsBody" class="recents-body"></div>
+    </div>
 
     <header class="hero">
       <h1 id="heroTitle">media toolbox</h1>
@@ -100,9 +111,13 @@
           <button id="meLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose file</button>
           <span class="muted" id="meName"></span>
         </div>
-        <div id="meEmpty" class="dropbox"><div class="dropbox-inner"><p class="dropbox-sub">Choose an audio or video file to read its metadata.<br/>Supported: mp4, mkv, mov, webm, avi · mp3, m4a, flac, ogg, opus, wav</p></div></div>
+        <div id="meEmpty" class="dropbox"><div class="dropbox-inner"><p class="dropbox-sub">Choose an image, audio or video file to read its metadata.<br/>Images: jpg, png, webp, tiff, heic · A/V: mp4, mkv, mov, webm, avi · mp3, m4a, flac, ogg, opus, wav</p></div></div>
         <div id="meBody" class="me-body hidden">
+          <div class="me-sec-title" id="meFieldsTitle">editable tags</div>
           <div class="me-fields" id="meFields"></div>
+          <div class="me-quick" id="meQuick"></div>
+          <div class="me-readonly" id="meReadonly"></div>
+          <div class="me-info" id="meFileInfo"></div>
           <div class="me-actions">
             <button id="meSave" class="btn primary">Save changes</button>
             <button id="meScrub" class="btn">Scrub all metadata</button>
@@ -112,10 +127,123 @@
         </div>
       </div>
 
+      <!-- Batch Rename -->
+      <div id="batchPanel" class="panel hidden">
+        <div class="toolbar">
+          <button id="brLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose files</button>
+          <button id="brClear" class="btn ghost">Clear</button>
+        </div>
+        <div class="br-wrap">
+          <div class="br-side">
+            <div class="me-sec-title">numbering</div>
+            <label class="field"><span>Base name (blank = keep name)</span><input id="brBase" type="text" placeholder="e.g. photo" /></label>
+            <div class="calc-row">
+              <label class="field"><span>Start at</span><input id="brStart" type="number" value="1" min="0" /></label>
+              <label class="field"><span>Digits</span><input id="brPad" type="number" value="3" min="1" max="8" /></label>
+            </div>
+            <div class="me-sec-title">find &amp; replace</div>
+            <div class="calc-row">
+              <label class="field"><span>Find</span><input id="brFind" type="text" placeholder="text in name" /></label>
+              <label class="field"><span>Replace with</span><input id="brReplace" type="text" placeholder="new text" /></label>
+            </div>
+            <p class="hint">Numbering (if a base name is set) overrides find/replace. Existing files are never overwritten.</p>
+            <button id="brRun" class="btn primary big" disabled>Rename files <span class="ic" data-icon="arrowRight"></span></button>
+            <div id="brStatus" class="fr-status"></div>
+          </div>
+          <div class="br-preview">
+            <div class="me-sec-title">preview</div>
+            <div id="brList" class="br-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Photo Effects -->
+      <div id="fxPanel" class="panel hidden">
+        <div class="toolbar">
+          <button id="fxLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose image</button>
+          <button id="fxDemo" class="btn ghost">Demo image</button>
+          <button id="fxClear" class="btn ghost">Clear effects</button>
+          <span class="muted" id="fxName"></span>
+        </div>
+        <div class="fx-wrap">
+          <div class="fx-side">
+            <div class="me-sec-title">effects stack</div>
+            <div id="fxStack" class="fx-stack"></div>
+            <div class="fx-add">
+              <select id="fxAdd">
+                <option value="">Add effect…</option>
+                <optgroup label="core">
+                  <option value="dither">dither</option>
+                  <option value="ascii">ascii</option>
+                  <option value="halftone">halftone</option>
+                  <option value="posterize">posterize</option>
+                  <option value="pixel">pixelate</option>
+                  <option value="threshold">threshold</option>
+                </optgroup>
+                <optgroup label="glitch">
+                  <option value="rgbshift">rgb shift</option>
+                  <option value="scanglitch">scan glitch</option>
+                  <option value="slice">slice displace</option>
+                </optgroup>
+                <optgroup label="atmosphere">
+                  <option value="grain">film grain</option>
+                  <option value="crt">crt / scanlines</option>
+                  <option value="vignette">vignette</option>
+                  <option value="chromatic">chromatic</option>
+                  <option value="glow">bloom / glow</option>
+                </optgroup>
+                <optgroup label="distort">
+                  <option value="blur">blur</option>
+                  <option value="edge">edge detect</option>
+                  <option value="emboss">emboss</option>
+                </optgroup>
+              </select>
+              <button id="fxAddBtn" class="btn">Add</button>
+            </div>
+            <div class="me-sec-title">presets</div>
+            <select id="fxPreset">
+              <option value="">Choose a preset stack…</option>
+            </select>
+
+            <div class="me-sec-title">params</div>
+            <div id="fxParams" class="fx-params"><p class="hint">Select an effect to edit its parameters.</p></div>
+
+            <div class="me-sec-title">palette</div>
+            <div class="fx-pal">
+              <div id="fxSwatches" class="fx-swatches"></div>
+              <select id="fxPalPreset"><option value="">Palette preset…</option></select>
+            </div>
+
+            <div class="me-sec-title">adjust</div>
+            <div class="fx-adjust">
+              <label class="fx-field"><span>Brightness <b id="fxBrightnessVal">0</b></span><input id="fxBrightness" type="range" min="-100" max="100" value="0" /></label>
+              <label class="fx-field"><span>Contrast <b id="fxContrastVal">0</b></span><input id="fxContrast" type="range" min="-100" max="100" value="0" /></label>
+              <label class="fx-field"><span>Saturation <b id="fxSaturationVal">0</b></span><input id="fxSaturation" type="range" min="-100" max="100" value="0" /></label>
+              <label class="check-inline"><input id="fxInvert" type="checkbox" /> <span class="hint">Invert colors</span></label>
+              <label class="check-inline"><input id="fxGrayscale" type="checkbox" /> <span class="hint">Grayscale input</span></label>
+            </div>
+          </div>
+          <div class="fx-main">
+            <div id="fxStage" class="fx-stage">
+              <div id="fxHint" class="fx-hint">Choose an image to begin.</div>
+              <canvas id="fxCanvas" class="fx-canvas hidden"></canvas>
+              <pre id="fxAscii" class="fx-ascii hidden"></pre>
+            </div>
+            <div class="fx-bar">
+              <span class="muted" id="fxStatus">idle</span>
+              <div class="fx-export">
+                <button id="fxCopyAscii" class="btn ghost hidden">Copy ASCII</button>
+                <button id="fxSave" class="btn primary" disabled>Save PNG <span class="ic" data-icon="download"></span></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Color Picker -->
       <div id="colorPanel" class="panel hidden">
         <div class="cp-wrap">
-          <div class="cp-left"><button id="cpLoad" class="btn primary">Choose an image</button><canvas id="cpCanvas" class="cp-canvas"></canvas></div>
+          <div class="cp-left"><div class="cp-actions"><button id="cpLoad" class="btn primary">Choose an image</button><button id="cpScreen" class="btn ghost">Pick from screen</button></div><canvas id="cpCanvas" class="cp-canvas"></canvas></div>
           <div class="cp-right">
             <div id="cpSwatch" class="cp-swatch"></div>
             <div class="cp-vals"><label class="field"><span>HEX</span><input id="cpHex" type="text" readonly /></label><label class="field"><span>RGB</span><input id="cpRgb" type="text" readonly /></label></div>
@@ -147,6 +275,10 @@
             <div class="yt-actions"><button id="ytDownload" class="btn primary big">Download <span class="ic" data-icon="download"></span></button><button id="ytCancel" class="btn ghost hidden">Cancel</button></div>
             <div id="ytProgress" class="yt-progress hidden"><div class="bar"><div id="ytBar" class="bar-fill"></div></div><div id="ytStatus" class="fr-status"></div></div>
           </div>
+        </div>
+        <div id="ytPreview" class="yt-preview hidden">
+          <div class="yt-preview-head"><span id="ytPreviewName">downloaded video</span><button id="ytPreviewClose" class="yt-preview-x" title="Close"><span class="ic" data-icon="x"></span></button></div>
+          <video id="ytVideo" class="yt-video" controls preload="metadata"></video>
         </div>
         <p class="yt-hint muted">Downloads go to your output folder. Only download content you have the rights to.</p>
       </div>
@@ -182,6 +314,7 @@
               </div>
             </div>
             <div id="ghStats" class="gh-stats muted"></div>
+            <div id="ghFlight" class="gh-flight"></div>
             <div id="ghCal" class="gh-cal"></div>
             <svg id="signature" class="signature" viewBox="0 0 320 90" aria-hidden="true">
               <path id="sigPath" d="M8 60 C 30 10, 50 80, 70 45 S 110 10, 130 50 C 150 80, 165 20, 185 50 S 230 80, 250 35 C 265 15, 285 55, 312 30"
@@ -241,7 +374,6 @@
       <div class="modal">
         <div class="modal-head"><h2>Settings</h2><button id="settingsClose" class="modal-x"><span class="ic" data-icon="x"></span></button></div>
         <div class="modal-body" id="settingsBody"></div>
-        <div class="modal-foot"><span class="muted" id="settingsCores"></span><button id="settingsSave" class="btn primary">Done</button></div>
       </div>
     </div>
 

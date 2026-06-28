@@ -63,6 +63,7 @@ let _gs = null;
 let _ytdlp = null;
 let _sevenzip = null;
 let _qpdf = null;
+let _exiftool = null;
 
 module.exports = {
   get ffmpeg() {
@@ -89,6 +90,12 @@ module.exports = {
     if (_qpdf === null) _qpdf = resolve('qpdf', 'qpdf');
     return _qpdf;
   },
+  get exiftool() {
+    // exiftool.exe needs its 'exiftool_files/' folder sitting beside it; both
+    // are packaged into resources/exiftool (see electron-builder.yml).
+    if (_exiftool === null) _exiftool = resolve('exiftool', 'exiftool');
+    return _exiftool;
+  },
   // True only when a real bundled/vendored binary was found (not a PATH fallback).
   isBundled() {
     return path.isAbsolute(this.ffmpeg) && fs.existsSync(this.ffmpeg);
@@ -104,5 +111,8 @@ module.exports = {
   },
   hasQpdf() {
     return path.isAbsolute(this.qpdf) && fs.existsSync(this.qpdf);
+  },
+  hasExiftool() {
+    return path.isAbsolute(this.exiftool) && fs.existsSync(this.exiftool);
   },
 };

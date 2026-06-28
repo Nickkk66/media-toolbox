@@ -5,6 +5,7 @@ vendor/gs/*.exe
 vendor/gs/*.dll
 vendor/qpdf/*.exe
 vendor/qpdf/*.dll
+vendor/exiftool/
 *.log
 # Bundled demo media (copyrighted; kept local only)
 src/songs/
