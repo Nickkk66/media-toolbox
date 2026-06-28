@@ -41,6 +41,12 @@ contextBridge.exposeInMainWorld('api', {
   ytCancel: () => ipcRenderer.invoke('yt:cancel'),
   onYtProgress: (cb) => ipcRenderer.on('yt:progress', (_e, d) => cb(d)),
 
+  // Spotify Downloader
+  spotifyInfo: (url) => ipcRenderer.invoke('spotify:info', url),
+  spotifyDownload: (opts) => ipcRenderer.invoke('spotify:download', opts),
+  spotifyCancel: () => ipcRenderer.invoke('spotify:cancel'),
+  onSpotifyProgress: (cb) => ipcRenderer.on('spotify:progress', (_e, d) => cb(d)),
+
   // AI Model Manager (Settings → local ai)
   aimodels: {
     list: () => ipcRenderer.invoke('aimodel:list'),

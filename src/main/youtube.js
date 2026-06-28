@@ -95,11 +95,30 @@ function download(opts, onProgress) {
 
   let proc = null;
   let canceled = false;
+  let settled = false;
+  let rejectPromise = null;
   let finalPath = '';
   let stderrTail = '';
   const startedAt = Date.now();
 
+  // Remove any partial/temp output files yt-dlp may have written for this job.
+  function cleanupPartials() {
+    try {
+      const re = /\.(part|ytdl|temp|tmp)$/i;
+      for (const f of fs.readdirSync(outDir)) {
+        try {
+          const p = path.join(outDir, f);
+          const st = fs.statSync(p);
+          if (st.mtimeMs >= startedAt - 1000 && (re.test(f) || /\.part-Frag\d+/i.test(f))) {
+            fs.unlinkSync(p);
+          }
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }
+
   const promise = new Promise((resolve, reject) => {
+    rejectPromise = reject;
     proc = spawn(ffmpegPath.ytdlp, args, { windowsHide: true });
 
     let buf = '';
@@ -137,9 +156,11 @@ function download(opts, onProgress) {
       }
     }
 
-    proc.on('error', (err) => reject(new Error(`Failed to start yt-dlp: ${err.message}`)));
+    proc.on('error', (err) => { if (settled) return; settled = true; reject(new Error(`Failed to start yt-dlp: ${err.message}`)); });
     proc.on('close', (code) => {
-      if (canceled) return reject(new Error('canceled'));
+      if (settled) return;
+      if (canceled) { settled = true; return reject(new Error('canceled')); }
+      settled = true;
 
       // yt-dlp can exit non-zero (e.g. a 429 on ONE caption track) while still
       // having written a usable file. So locate the output FIRST and only treat a
@@ -167,7 +188,15 @@ function download(opts, onProgress) {
           } catch { /* */ }
         }
         if (finalPath && subMode === 'without' && /\.srt$/i.test(finalPath)) {
-          finalPath = stripTimestamps(finalPath);
+          const srtSrc = finalPath;
+          const txt = stripTimestamps(srtSrc);
+          // Only one file should remain: delete the source .srt so just the .txt is returned.
+          if (txt !== srtSrc) { try { fs.unlinkSync(srtSrc); } catch { /* ignore */ } }
+          finalPath = txt;
+        } else if (finalPath && /\.srt$/i.test(finalPath)) {
+          // with / captions → keep only the .srt; remove any stray sibling .txt.
+          const stray = finalPath.replace(/\.srt$/i, '.txt');
+          if (stray !== finalPath) { try { if (fs.existsSync(stray)) fs.unlinkSync(stray); } catch { /* ignore */ } }
         }
       } else if (!finalPath || !fs.existsSync(finalPath)) {
         // Video/audio: the --print after_move:filepath line wasn't captured.
@@ -203,12 +232,22 @@ function download(opts, onProgress) {
 
   function cancel() {
     canceled = true;
-    if (proc && !proc.killed) {
-      proc.kill();
+    // Force-kill the whole process tree promptly. On Windows yt-dlp spawns child
+    // processes (ffmpeg, etc.) so a plain kill on the parent isn't enough.
+    if (proc) {
       if (process.platform === 'win32' && proc.pid) {
         try { spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true }); } catch { /* ignore */ }
       }
+      try { proc.kill('SIGKILL'); } catch { /* ignore */ }
     }
+    // Reject the in-flight promise immediately rather than waiting for 'close',
+    // then clean up any partial output once the process has had a moment to release files.
+    if (!settled) {
+      settled = true;
+      if (rejectPromise) rejectPromise(new Error('canceled'));
+    }
+    cleanupPartials();
+    setTimeout(cleanupPartials, 400);
   }
 
   return { promise, cancel };

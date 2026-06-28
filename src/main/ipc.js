@@ -8,6 +8,7 @@ const encoders = require('./ffmpeg/encoders');
 const ffmpegPath = require('./ffmpeg/ffmpegPath');
 const media = require('./media');
 const youtube = require('./youtube');
+const spotify = require('./spotify');
 const aiModels = require('./aiModels');
 const settings = require('./settings');
 const { Queue } = require('./queue');
@@ -124,6 +125,30 @@ function registerIpc(getWindow) {
     }
   });
   ipcMain.handle('yt:cancel', () => { if (ytController) ytController.cancel(); return true; });
+
+  // ---- Spotify Downloader (yt-dlp match + ffmpeg tag/embed) ----
+  let spotController = null;
+  ipcMain.handle('spotify:info', (_e, url) => spotify.info(url));
+  ipcMain.handle('spotify:download', async (_e, opts) => {
+    // Resolve the output dir the same way the downloader does.
+    let outputDir = opts.outputDir;
+    if (!outputDir) {
+      const s = settings.load();
+      if (s.downloadLocation === 'custom' && s.customDownloadDir) {
+        outputDir = s.customDownloadDir;
+      } else {
+        try { outputDir = app.getPath('downloads'); }
+        catch { outputDir = require('os').homedir(); }
+      }
+    }
+    spotController = spotify.download({ ...opts, outputDir }, (p) => send('spotify:progress', p));
+    try {
+      return await spotController.promise;
+    } finally {
+      spotController = null;
+    }
+  });
+  ipcMain.handle('spotify:cancel', () => { if (spotController) spotController.cancel(); return true; });
 
   ipcMain.handle('media:typeForPath', (_e, p) => media.typeForPath(p));
 

@@ -85,12 +85,14 @@ function customSelect(sel) {
 function enhanceSelects(root) { (root || document).querySelectorAll('select:not([data-cs])').forEach(customSelect); }
 function setHero(title, sub) { $('heroTitle').textContent = title; $('heroSub').textContent = sub; }
 
-const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'pbPanel', 'aiHubPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel', 'ttsPanel'];
+const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'spotifyPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'pbPanel', 'aiHubPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel', 'ttsPanel'];
 function hideAll() {
   PANELS.forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
   document.body.classList.remove('on-profile');
   cancelAnimationFrame(pixelRaf);
-  const a = $('apAudio'); if (a && !a.paused) { a.pause(); const pl = $('apPlay'); if (pl) pl.querySelector('.ic').innerHTML = icon('play'); }
+  // NOTE: do NOT pause #apAudio here — the About-page music persists across
+  // navigation. The element stays in the DOM and keeps playing when you leave;
+  // returning to About reflects the current play/pause state (see openProfile).
 }
 
 // ---------- spring helper (damped harmonic oscillator) ----------
@@ -224,6 +226,7 @@ function openItem(item, kind) {
   if (item.engine === 'upscaleai') return openUpscaleAi();
   if (item.engine === 'removebg') return openRemoveBg();
   if (item.engine === 'tts') return openTts();
+  if (item.engine === 'spotify') return openSpotify();
   hideAll();
   $('toolHeader').classList.remove('hidden');
   $('toolName').textContent = item.label;
@@ -2443,7 +2446,7 @@ function ytRefreshSub() {
   if (subWrap) subWrap.classList.toggle('hidden', mode === 'thumbnail');
   if (mode === 'audio') sub.innerHTML = ['mp3', 'ogg', 'm4a', 'opus', 'wav'].map((f) => `<option value="${f}">${f.toUpperCase()}</option>`).join('');
   else if (mode === 'video') sub.innerHTML = ['mp4', 'mkv', 'webm'].map((f) => `<option value="${f}">${f.toUpperCase()}</option>`).join('');
-  else if (mode === 'transcription') sub.innerHTML = ['with', 'without', 'captions'].map((f) => `<option value="${f}">${f === 'with' ? 'With timestamps' : f === 'without' ? 'Without timestamps (.txt)' : 'Captions (.srt)'}</option>`).join('');
+  else if (mode === 'transcription') sub.innerHTML = ['with', 'without', 'captions'].map((f) => { const label = f === 'with' ? 'With timestamps (.srt)' : f === 'without' ? 'Without timestamps (.txt)' : 'Captions (.srt)'; return `<option value="${f}"${f === 'without' ? ' selected' : ''}>${label}</option>`; }).join('');
   if (sub._csRender) sub._csRender();
   ytRefreshQuality();
 }
@@ -2467,7 +2470,7 @@ async function ytFetch() {
 async function ytDownload() {
   if (isOffline()) { toast("You're offline — connect to the internet to download.", { kind: 'error' }); return; }
   if (!yt.info || yt.downloading) return;
-  yt.downloading = true; $('ytDownload').disabled = true; $('ytCancel').classList.remove('hidden');
+  yt.downloading = true; yt.canceling = false; $('ytDownload').disabled = true; $('ytCancel').classList.remove('hidden');
   $('ytProgress').classList.remove('hidden'); $('ytBar').style.width = '0%'; $('ytStatus').className = 'fr-status'; $('ytStatus').textContent = 'Starting…';
   const mode = $('ytMode').value, sub = $('ytSub').value;
   const opts = { url: yt.info.webpage, mode, outputDir: state.outputDir };
@@ -2477,6 +2480,7 @@ async function ytDownload() {
   // 'thumbnail' mode needs no extra options — the main process downloads only the image.
   try {
     const res = await window.api.ytDownload(opts);
+    if (yt.canceling) return;   // user canceled mid-flight; UI already reset
     $('ytBar').style.width = '100%'; $('ytStatus').className = 'fr-status done';
     $('ytStatus').textContent = res.outSize ? `Done (${fmtBytes(res.outSize)}) — click to open` : 'Done — click to open';
     // Always clickable: open the file if we have its path, else open the folder.
@@ -2486,8 +2490,22 @@ async function ytDownload() {
     if (mode === 'video' && res.outputPath) ytPlayFile(res.outputPath); else ytClosePreview();
     toast('Download complete', res.outputPath ? { path: res.outputPath } : {});
   }
-  catch (err) { const c = String(err.message).includes('canceled'); $('ytStatus').className = c ? 'fr-status' : 'fr-status error'; $('ytStatus').textContent = c ? 'Canceled' : ('Error: ' + String(err.message).split('\n')[0]); }
-  finally { yt.downloading = false; $('ytDownload').disabled = false; $('ytCancel').classList.add('hidden'); }
+  catch (err) { if (yt.canceling) return; const c = String(err.message).includes('canceled'); $('ytStatus').className = c ? 'fr-status' : 'fr-status error'; $('ytStatus').textContent = c ? 'Canceled' : ('Error: ' + String(err.message).split('\n')[0]); }
+  finally { if (!yt.canceling) { yt.downloading = false; $('ytDownload').disabled = false; $('ytCancel').classList.add('hidden'); } }
+}
+// Cancel CLICK: reset the UI optimistically (don't wait for the process to exit),
+// then ask the main process to kill the download. The in-flight ytDownload promise
+// will reject with 'canceled'; its handler is a no-op once we've already reset here.
+function ytCancelClick() {
+  if (!yt.downloading) return;
+  yt.canceling = true;
+  yt.downloading = false;
+  $('ytDownload').disabled = false;
+  $('ytCancel').classList.add('hidden');
+  $('ytProgress').classList.add('hidden');
+  $('ytBar').style.width = '0%';
+  $('ytStatus').className = 'fr-status'; $('ytStatus').textContent = 'Canceled';
+  try { window.api.ytCancel(); } catch { /* */ }
 }
 // Domains yt-dlp supports for this app. Host matches if it equals the domain
 // or ends with ".<domain>".
@@ -2521,9 +2539,94 @@ function wireYoutube() {
   $('ytMode').addEventListener('change', ytRefreshSub);
   $('ytSub').addEventListener('change', ytRefreshQuality);
   $('ytDownload').addEventListener('click', ytDownload);
-  $('ytCancel').addEventListener('click', () => window.api.ytCancel());
+  $('ytCancel').addEventListener('click', ytCancelClick);
   const pc = $('ytPreviewClose'); if (pc) pc.addEventListener('click', ytClosePreview);
-  window.api.onYtProgress((p) => { $('ytProgress').classList.remove('hidden'); $('ytBar').style.width = `${(p.percent || 0).toFixed(1)}%`; $('ytStatus').textContent = p.phase === 'processing' ? 'Converting…' : `${(p.percent || 0).toFixed(0)}%`; });
+  window.api.onYtProgress((p) => { if (yt.canceling || !yt.downloading) return; $('ytProgress').classList.remove('hidden'); $('ytBar').style.width = `${(p.percent || 0).toFixed(1)}%`; $('ytStatus').textContent = p.phase === 'processing' ? 'Converting…' : `${(p.percent || 0).toFixed(0)}%`; });
+}
+
+// ---------- Spotify Downloader ----------
+// Reads a track's public Spotify embed metadata + cover, then finds the match on
+// YouTube (yt-dlp) and tags the mp3 with the Spotify metadata + embedded cover.
+const spot = { info: null, busy: false };
+function spotErr(m) { const el = $('spotError'); if (!el) return; if (!m) { el.classList.add('hidden'); return; } el.textContent = m; el.classList.remove('hidden'); }
+function openSpotify() {
+  hideAll(); $('toolHeader').classList.remove('hidden');
+  state.currentTool = { id: 'spotify', label: 'Spotify Downloader' }; updateFavBtn();
+  $('toolName').textContent = 'Spotify Downloader';
+  setHero('Spotify Downloader', 'Paste a Spotify track link — grab the song (as MP3) or just the album cover');
+  $('spotifyPanel').classList.remove('hidden');
+}
+async function spotFetch() {
+  if (isOffline()) { toast("You're offline — connect to the internet to download.", { kind: 'error' }); return; }
+  const url = $('spotUrl').value.trim(); if (!url) return;
+  spotErr(''); $('spotFetch').disabled = true; $('spotFetch').textContent = 'Fetching…';
+  try {
+    const info = await window.api.spotifyInfo(url);
+    spot.info = info;
+    if (info.coverDataUrl) { $('spotCover').src = info.coverDataUrl; $('spotCover').classList.remove('hidden'); }
+    else $('spotCover').classList.add('hidden');
+    $('spotTitle').textContent = info.title || '';
+    $('spotArtist').textContent = info.artist || '';
+    $('spotAlbum').textContent = [info.album, info.year].filter(Boolean).join(' · ');
+    $('spotInfo').classList.remove('hidden');
+    $('spotProgress').classList.add('hidden');
+    $('spotStatus').textContent = ''; $('spotStatus').className = 'fr-status';
+  } catch (err) { spotErr(String(err.message || err)); $('spotInfo').classList.add('hidden'); }
+  finally { $('spotFetch').disabled = false; $('spotFetch').textContent = 'Fetch'; }
+}
+async function spotDownload(what) {
+  if (isOffline()) { toast("You're offline — connect to the internet to download.", { kind: 'error' }); return; }
+  if (!spot.info || spot.busy) return;
+  spot.busy = true;
+  $('spotSong').disabled = true; $('spotCoverBtn').disabled = true; $('spotCancel').classList.remove('hidden');
+  $('spotProgress').classList.remove('hidden'); $('spotBar').style.width = '0%';
+  $('spotStatus').className = 'fr-status'; $('spotStatus').textContent = 'Starting…';
+  const opts = {
+    spotifyUrl: $('spotUrl').value.trim(),
+    what,
+    withMetadata: !!$('spotMeta').checked,
+    embedCover: !!$('spotEmbed').checked,
+    outputDir: state.outputDir,
+  };
+  try {
+    const res = await window.api.spotifyDownload(opts);
+    $('spotBar').style.width = '100%'; $('spotStatus').className = 'fr-status done';
+    $('spotStatus').textContent = res.outSize ? `Done (${fmtBytes(res.outSize)}) — click to open` : 'Done — click to open';
+    $('spotStatus').onclick = () => { if (res.outputPath) window.api.showItem(res.outputPath); else if (state.outputDir) window.api.openPath(state.outputDir); };
+    if (res.outputPath) addRecent({ path: res.outputPath });
+    toast('Download complete', res.outputPath ? { path: res.outputPath } : {});
+  } catch (err) {
+    const c = String(err.message).includes('canceled');
+    $('spotStatus').className = c ? 'fr-status' : 'fr-status error';
+    $('spotStatus').textContent = c ? 'Canceled' : ('Error: ' + String(err.message).split('\n')[0]);
+  } finally {
+    spot.busy = false; $('spotSong').disabled = false; $('spotCoverBtn').disabled = false; $('spotCancel').classList.add('hidden');
+  }
+}
+function spotValidate() {
+  const inp = $('spotUrl'); if (!inp) return;
+  const val = inp.value.trim();
+  const ok = !val || /open\.spotify\.com\/.*track\/|spotify:track:/i.test(val);
+  inp.classList.toggle('invalid', !ok);
+  const fb = $('spotFetch'); if (fb) fb.disabled = !ok && val.length > 0;
+}
+function wireSpotify() {
+  if (!$('spotifyPanel')) return;
+  $('spotFetch').addEventListener('click', spotFetch);
+  $('spotUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') spotFetch(); });
+  $('spotUrl').addEventListener('input', spotValidate);
+  $('spotSong').addEventListener('click', () => spotDownload('song'));
+  $('spotCoverBtn').addEventListener('click', () => spotDownload('cover'));
+  $('spotCancel').addEventListener('click', () => window.api.spotifyCancel());
+  // "embed cover" only matters when metadata is on.
+  $('spotMeta').addEventListener('change', () => { $('spotEmbed').disabled = !$('spotMeta').checked; });
+  window.api.onSpotifyProgress((p) => {
+    if (!spot.busy) return;
+    $('spotProgress').classList.remove('hidden');
+    $('spotBar').style.width = `${(p.percent || 0).toFixed(1)}%`;
+    const labels = { info: 'Reading Spotify…', download: 'Downloading…', processing: 'Converting…', tagging: 'Tagging…', done: 'Done' };
+    $('spotStatus').textContent = labels[p.phase] || `${(p.percent || 0).toFixed(0)}%`;
+  });
 }
 
 // ---------- top-bar search (hover-expand, tag-aware) ----------
@@ -4202,7 +4305,15 @@ function wireAudioPlayer() {
   });
 
   // Re-tint the current track's cover (used when About opens so the live theme is honored).
-  retintPlayer = () => tintFromCover(PLAYLIST[current].cover);
+  // Also re-sync the play/pause icon + progress to the ALREADY-PLAYING audio so reopening
+  // About never resets or restarts the track — it just reflects the current state.
+  retintPlayer = () => {
+    tintFromCover(PLAYLIST[current].cover);
+    setPlayIcon();
+    const p = a.duration ? (a.currentTime / a.duration) * 100 : 0;
+    $('apFill').style.width = p + '%';
+    $('apCur').textContent = fmt(a.currentTime); $('apDur').textContent = fmt(a.duration);
+  };
 
   loadTrack(0, false);
 }
@@ -4271,7 +4382,7 @@ async function init() {
   $('homeBtn').addEventListener('click', showHome);
   $('profileBtn').addEventListener('click', openProfile);
   $('settingsBtn').addEventListener('click', () => openSettings('appearance'));
-  document.querySelectorAll('#homeView .home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else if (c.dataset.tool === 'photofx') { state.backTo = 'home'; openPhotoEffects(); } else if (c.dataset.tool === 'ai') { state.backTo = 'home'; openAiHub(); } else showSection(c.dataset.section); }));
+  document.querySelectorAll('#homeView .home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else if (c.dataset.tool === 'photofx') { state.backTo = 'home'; openPhotoEffects(); } else if (c.dataset.tool === 'ai') { state.backTo = 'home'; openAiHub(); } else if (c.dataset.tool === 'spotify') { state.backTo = 'home'; openSpotify(); } else showSection(c.dataset.section); }));
   wireTitlebar(); wireStretch(); wireMetaEditor();
   $('settingsClose').addEventListener('click', () => $('settingsModal').classList.add('hidden'));
   $('settingsModal').addEventListener('click', (e) => { if (e.target === $('settingsModal')) $('settingsModal').classList.add('hidden'); });
@@ -4289,7 +4400,7 @@ async function init() {
   $('modalOverlay').addEventListener('click', (e) => { if (e.target === $('modalOverlay')) closeModal(); });
   $('modalApply').addEventListener('click', applyModal);
   $('modalReset').addEventListener('click', () => { const e = findEntry(state.modalJobId); if (e) { const of = e.settings.outputFormat; e.settings = { ...defaultSettingsFor(e.mediaType), ...(state.ws ? state.ws.base : {}) }; e.settings.outputFormat = of; $('modalBody').innerHTML = buildModalBody(e); wireModalBody(e); injectIcons($('modalBody')); } });
-  wireDnd(); wireJobEvents(); wireYoutube(); wireColorPicker(); wireRecents(); wireFavs(); wireSearch(); unitInit(); timeInit(); wireAudioPlayer();
+  wireDnd(); wireJobEvents(); wireYoutube(); wireSpotify(); wireColorPicker(); wireRecents(); wireFavs(); wireSearch(); unitInit(); timeInit(); wireAudioPlayer();
   enhanceSelects(document);
   // Single-instance "open another?" prompt.
   window.api.onSecondInstance(() => $('instanceModal').classList.remove('hidden'));
