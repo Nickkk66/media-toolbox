@@ -308,6 +308,7 @@
           <button class="home-card" data-ai="transcribe"><span class="home-ic" data-icon="audio"></span><span class="home-title">Subtitle / Transcript</span><span class="home-desc">local speech-to-text · srt · txt · vtt</span></button>
           <button class="home-card" data-ai="upscale"><span class="home-ic" data-icon="image"></span><span class="home-title">AI Image Upscaler</span><span class="home-desc">Real-ESRGAN super-resolution</span></button>
           <button class="home-card" data-ai="removebg"><span class="home-ic" data-icon="image"></span><span class="home-title">Background Removal</span><span class="home-desc">AI cutout · transparent PNG</span></button>
+          <button class="home-card" data-ai="tts"><span class="home-ic" data-icon="audio"></span><span class="home-title">Text to Speech</span><span class="home-desc">Piper voices · wav · mp3</span></button>
         </div>
       </div>
 
@@ -412,6 +413,27 @@
             <div id="rbProgress" class="yt-progress hidden"><div class="bar"><div id="rbBar" class="bar-fill"></div></div><div id="rbStatus" class="fr-status"></div></div>
           </div>
         </div>
+      </div>
+
+      <!-- Text to Speech (Piper) -->
+      <div id="ttsPanel" class="panel hidden">
+        <div id="ttsNoEngine" class="ai-notice hidden">Text-to-speech engine (Piper) isn’t available in this build.</div>
+        <div id="ttsNoModel" class="ai-notice hidden">No voice installed — download one in Settings → Local AI.</div>
+        <label class="field tts-text"><span>Text</span><textarea id="ttsText" rows="6" placeholder="Type or paste the text you want spoken…"></textarea></label>
+        <div class="tr-grid">
+          <label class="field"><span>Voice</span><select id="ttsVoice"></select></label>
+          <label class="field"><span>Output format</span>
+            <select id="ttsFormat">
+              <option value="wav" selected>WAV</option>
+              <option value="mp3">MP3</option>
+            </select>
+          </label>
+        </div>
+        <div class="tr-foot">
+          <p class="hint tr-hint">Speech is synthesized entirely on your device — works offline. Voices are downloaded once in Settings → Local AI.</p>
+          <button id="ttsRun" class="btn primary big" disabled>Generate <span class="ic" data-icon="arrowRight"></span></button>
+        </div>
+        <div id="ttsProgress" class="yt-progress hidden"><div class="bar"><div id="ttsBar" class="bar-fill"></div></div><div id="ttsStatus" class="fr-status"></div></div>
       </div>
 
       <!-- Color Picker -->

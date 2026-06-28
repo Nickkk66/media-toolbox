@@ -59,8 +59,10 @@ contextBridge.exposeInMainWorld('api', {
   aiTranscribe: (opts) => ipcRenderer.invoke('ai:transcribe', opts),
   aiUpscale: (opts) => ipcRenderer.invoke('ai:upscale', opts),
   aiRemoveBg: (opts) => ipcRenderer.invoke('ai:removebg', opts),
+  aiTts: (opts) => ipcRenderer.invoke('ai:tts', opts),
   onAiTranscribeProgress: (cb) => ipcRenderer.on('ai:transcribe:progress', (_e, d) => cb(d)),
   onAiUpscaleProgress: (cb) => ipcRenderer.on('ai:upscale:progress', (_e, d) => cb(d)),
+  onAiTtsProgress: (cb) => ipcRenderer.on('ai:tts:progress', (_e, d) => cb(d)),
 
   // Window controls (custom frameless titlebar)
   winMinimize: () => ipcRenderer.invoke('win:minimize'),

@@ -76,6 +76,7 @@ function registerIpc(getWindow) {
     hasQpdf: ffmpegPath.hasQpdf(),
     hasExiftool: ffmpegPath.hasExiftool(),
     hasWhisper: ffmpegPath.hasWhisper(),
+    hasPiper: ffmpegPath.hasPiper(),
     hasRealesrgan: ffmpegPath.hasRealesrgan(),
     // Background removal needs the native ORT runtime; degrade gracefully if it
     // fails to load (the tool then shows "AI runtime unavailable").
@@ -774,6 +775,75 @@ function registerIpc(getWindow) {
     let size = 0; try { size = fs.statSync(outPath).size; } catch { /* */ }
     send('ai:upscale:progress', { percent: 100 });
     return { outputPath: outPath, outSize: size };
+  });
+
+  // ---- Local AI: Text to Speech (Piper) ----
+  // Piper reads text from STDIN and writes a WAV: `piper -m <voice.onnx> -f out.wav`.
+  // The voice's `.onnx.json` config must sit beside the `.onnx` (handled by the
+  // aiModels pair-download). If mp3 is requested, ffmpeg transcodes the wav.
+  ipcMain.handle('ai:tts', async (_e, { text, voiceId, format, outputDir }) => {
+    if (!ffmpegPath.hasPiper()) {
+      throw new Error('Text-to-speech engine (Piper) is not available in this build.');
+    }
+    const say = String(text == null ? '' : text).trim();
+    if (!say) throw new Error('Enter some text to speak.');
+    if (!voiceId) throw new Error('No voice selected. Download one in Settings → Local AI.');
+    if (!aiModels.isInstalled('tts', voiceId)) {
+      throw new Error('That voice is not installed. Download it in Settings → Local AI.');
+    }
+    const voiceFile = aiModels.modelPath('tts', voiceId);
+    if (!voiceFile || !fs.existsSync(voiceFile)) {
+      throw new Error('Voice model file is missing. Re-download it in Settings → Local AI.');
+    }
+
+    const fmt = (format === 'mp3') ? 'mp3' : 'wav';
+    const dir = resolveOutputDir({ outputDir }, app.getPath('downloads'));
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
+
+    // Temp wav under the OS temp folder; cleaned up at the end.
+    const tmpDir = path.join(app.getPath('temp'), 'mtb-tts');
+    try { fs.mkdirSync(tmpDir, { recursive: true }); } catch { /* */ }
+    const wavPath = path.join(tmpDir, `tts_${Date.now()}.wav`);
+
+    send('ai:tts:progress', { stage: 'synth', indeterminate: true });
+
+    // Step 1: synthesize the WAV with Piper (text piped to stdin).
+    try {
+      await new Promise((resolve, reject) => {
+        let stderrTail = '';
+        const proc = spawn(ffmpegPath.piper, ['-m', voiceFile, '-f', wavPath], { windowsHide: true });
+        proc.stderr.on('data', (b) => { stderrTail = (stderrTail + b.toString()).slice(-4000); });
+        proc.on('error', (err) => reject(new Error(err.message)));
+        proc.on('close', (code) => {
+          if (code === 0 && fs.existsSync(wavPath)) resolve();
+          else reject(new Error((stderrTail.split('\n').filter(Boolean).pop()) || 'Speech synthesis failed.'));
+        });
+        try { proc.stdin.write(say); proc.stdin.end(); } catch (err) { reject(new Error(err.message)); }
+      });
+
+      const baseName = `speech_${voiceId}`;
+      const outputPath = uniqueOutput(dir, baseName, fmt, true);
+
+      if (fmt === 'mp3') {
+        // Step 2 (mp3 only): ffmpeg wav -> mp3.
+        send('ai:tts:progress', { stage: 'encode', indeterminate: true });
+        await new Promise((resolve, reject) => {
+          const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', wavPath, '-c:a', 'libmp3lame', '-q:a', '2', outputPath];
+          execFile(ffmpegPath.ffmpeg, args, { windowsHide: true }, (err, _o, stderr) => {
+            if (err) reject(new Error((String(stderr || err.message).split('\n').filter(Boolean).pop()) || 'MP3 encode failed.'));
+            else resolve();
+          });
+        });
+      } else {
+        fs.copyFileSync(wavPath, outputPath);
+      }
+
+      let outSize = 0; try { outSize = fs.statSync(outputPath).size; } catch { /* */ }
+      send('ai:tts:progress', { stage: 'done', percent: 100 });
+      return { outputPath, outSize };
+    } finally {
+      try { fs.unlinkSync(wavPath); } catch { /* */ }
+    }
   });
 }
 

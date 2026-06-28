@@ -66,6 +66,7 @@ let _qpdf = null;
 let _exiftool = null;
 let _realesrgan = null;
 let _whisper = null;
+let _piper = null;
 
 module.exports = {
   get ffmpeg() {
@@ -108,6 +109,11 @@ module.exports = {
     if (_whisper === null) _whisper = resolve('whisper-cli', 'whisper');
     return _whisper;
   },
+  get piper() {
+    // piper.exe (Piper TTS) + its DLLs + espeak-ng-data/ beside it; voices downloaded.
+    if (_piper === null) _piper = resolve('piper', 'piper');
+    return _piper;
+  },
   // True only when a real bundled/vendored binary was found (not a PATH fallback).
   isBundled() {
     return path.isAbsolute(this.ffmpeg) && fs.existsSync(this.ffmpeg);
@@ -132,5 +138,8 @@ module.exports = {
   },
   hasWhisper() {
     return path.isAbsolute(this.whisper) && fs.existsSync(this.whisper);
+  },
+  hasPiper() {
+    return path.isAbsolute(this.piper) && fs.existsSync(this.piper);
   },
 };

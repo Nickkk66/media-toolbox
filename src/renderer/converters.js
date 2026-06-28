@@ -201,6 +201,7 @@ const AI_TOOLS = [
   { id: 'transcribe', label: 'Subtitle / Transcript Extractor', engine: 'transcribe', accept: VIDEO.concat(AUDIO), tags: ['subtitle', 'subtitles', 'transcribe', 'transcript', 'caption', 'captions', 'speech to text', 'whisper', 'srt', 'text', 'ai'] },
   { id: 'image-upscaler-ai', label: 'AI Image Upscaler', engine: 'upscaleai', accept: IMAGE, tags: ['upscale', 'upscaler', 'enhance', 'super resolution', 'ai', 'photo', 'hd', 'enlarge', 'image'] },
   { id: 'remove-bg', label: 'Background Removal', engine: 'removebg', accept: IMAGE, tags: ['background', 'remove background', 'remove bg', 'transparent', 'cutout', 'matting', 'knockout', 'png', 'ai', 'image'] },
+  { id: 'tts', label: 'Text to Speech', engine: 'tts', tags: ['tts', 'text to speech', 'speech', 'voice', 'narration', 'voiceover', 'speak', 'say', 'audio', 'ai'] },
 ];
 
 function findIn(cats, id) {

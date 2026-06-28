@@ -56,6 +56,14 @@ extraResources:
     filter:
       - "whisper-cli.exe"
       - "*.dll"
+  # Piper TTS: piper.exe + DLLs + espeak-ng-data (voices are downloaded).
+  - from: vendor/piper
+    to: piper
+    filter:
+      - "piper.exe"
+      - "*.dll"
+      - "*.ort"
+      - "espeak-ng-data/**"
 
 win:
   target:

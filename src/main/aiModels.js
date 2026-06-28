@@ -25,6 +25,11 @@ function hfUrl(file) { return HF + file; }
 const REMBG = 'https://github.com/danielgatis/rembg/releases/download/v0.0.0/';
 function rembgUrl(file) { return REMBG + file; }
 
+// Piper TTS voices live on HuggingFace `rhasspy/piper-voices`. Each voice is a
+// PAIR: an `.onnx` model + a tiny `.onnx.json` config (same basename).
+const PIPER = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/';
+function piperUrl(rel) { return PIPER + rel; }
+
 // ---- Manifest -------------------------------------------------------------
 // Each entry: { id, label, file, url, sizeBytes, tier }. Real-ESRGAN models are
 // bundled (not managed). Managed features: `whisper` (transcription) and
@@ -42,10 +47,32 @@ const MODELS = {
     { id: 'u2net',             label: 'U²-Net (standard, ~176 MB)',  file: 'u2net.onnx',             sizeBytes: 175997641, tier: 'standard', host: 'rembg' },
     { id: 'isnet-general-use', label: 'IS-Net (best, ~179 MB)',      file: 'isnet-general-use.onnx', sizeBytes: 178648008, tier: 'best',     host: 'rembg' },
   ],
+  // Piper TTS voices (English). Each entry is a PAIR: `url` -> <name>.onnx and
+  // `configUrl` -> <name>.onnx.json. `sizeBytes` is the .onnx size (the json
+  // sidecar is a few KB). `file` is the .onnx basename inside models/tts/.
+  tts: [
+    { id: 'en_US-amy-medium',    label: 'Amy · US English (medium)',    rel: 'en/en_US/amy/medium/en_US-amy-medium.onnx',       sizeBytes: 63201294, tier: 'balanced', host: 'piper' },
+    { id: 'en_US-ryan-medium',   label: 'Ryan · US English (medium)',   rel: 'en/en_US/ryan/medium/en_US-ryan-medium.onnx',     sizeBytes: 63201294, tier: 'balanced', host: 'piper' },
+    { id: 'en_US-lessac-medium', label: 'Lessac · US English (medium)', rel: 'en/en_US/lessac/medium/en_US-lessac-medium.onnx', sizeBytes: 63201294, tier: 'balanced', host: 'piper' },
+    { id: 'en_GB-alan-medium',   label: 'Alan · UK English (medium)',   rel: 'en/en_GB/alan/medium/en_GB-alan-medium.onnx',     sizeBytes: 63201294, tier: 'balanced', host: 'piper' },
+    { id: 'en_US-amy-low',       label: 'Amy · US English (low, fast)', rel: 'en/en_US/amy/low/en_US-amy-low.onnx',             sizeBytes: 63104526, tier: 'fast',     host: 'piper' },
+  ],
 };
-// Fill in each entry's download URL (HF resolve for whisper, GitHub release for rembg).
+// Fill in each entry's download URL + (for piper) its config sidecar URL.
+// whisper -> HF resolve; rembg -> GitHub release; piper -> HF piper-voices.
 for (const list of Object.values(MODELS)) {
-  for (const m of list) m.url = (m.host === 'rembg') ? rembgUrl(m.file) : hfUrl(m.file);
+  for (const m of list) {
+    if (m.host === 'piper') {
+      m.file = m.rel.split('/').pop();      // <name>.onnx
+      m.configFile = m.file + '.json';      // <name>.onnx.json
+      m.url = piperUrl(m.rel);
+      m.configUrl = piperUrl(m.rel + '.json');
+    } else if (m.host === 'rembg') {
+      m.url = rembgUrl(m.file);
+    } else {
+      m.url = hfUrl(m.file);
+    }
+  }
 }
 
 // ---- Paths ----------------------------------------------------------------
@@ -72,6 +99,13 @@ function modelPath(feature, id) {
   return path.join(modelsDir(feature), e.file);
 }
 
+// Path to a Piper voice's `.onnx.json` config sidecar (null for non-piper).
+function configPath(feature, id) {
+  const e = entry(feature, id);
+  if (!e || !e.configFile) return null;
+  return path.join(modelsDir(feature), e.configFile);
+}
+
 // Installed = file exists AND its size is within ~5% of the expected size (so a
 // truncated/partial file is rejected and offered for re-download).
 function isInstalled(feature, id) {
@@ -82,7 +116,14 @@ function isInstalled(feature, id) {
     const st = fs.statSync(p);
     if (!st.isFile()) return false;
     const lo = e.sizeBytes * 0.95;
-    return st.size >= lo; // accept anything from 95% upward (HF sizes are approx)
+    if (st.size < lo) return false; // accept anything from 95% upward (HF sizes are approx)
+    // Piper voices also require their `.onnx.json` config sidecar.
+    if (e.configFile) {
+      const cp = configPath(feature, id);
+      const cst = fs.statSync(cp);
+      if (!cst.isFile() || cst.size <= 0) return false;
+    }
+    return true;
   } catch { return false; }
 }
 
@@ -124,11 +165,55 @@ function openStream(url, onResponse, onError, depth) {
   return req;
 }
 
+// Download a small sidecar file (no progress, no size gate) -> Promise. Used for
+// the Piper `.onnx.json` config that rides alongside each voice model.
+function downloadSidecar(url, destPath) {
+  const tmp = destPath + '.part';
+  try { fs.unlinkSync(tmp); } catch { /* */ }
+  return new Promise((resolve, reject) => {
+    let out;
+    try { out = fs.createWriteStream(tmp); } catch (err) { return reject(err); }
+    let settled = false;
+    const fail = (err) => { if (settled) return; settled = true; try { out.destroy(); } catch { /* */ } try { fs.unlinkSync(tmp); } catch { /* */ } reject(err); };
+    openStream(url, (res) => {
+      res.on('error', fail);
+      res.pipe(out);
+    }, fail, 0);
+    out.on('error', fail);
+    out.on('finish', () => {
+      if (settled) return; settled = true;
+      let size = 0; try { size = fs.statSync(tmp).size; } catch { /* */ }
+      if (size <= 0) { try { fs.unlinkSync(tmp); } catch { /* */ } return reject(new Error('Config download failed (empty file).')); }
+      try { try { fs.unlinkSync(destPath); } catch { /* */ } fs.renameSync(tmp, destPath); }
+      catch (err) { try { fs.unlinkSync(tmp); } catch { /* */ } return reject(err); }
+      resolve(destPath);
+    });
+  });
+}
+
 // download(feature, id, onProgress) -> Promise. Writes url -> temp file in
 // modelsDir, then atomically renames to the final file. Calls
 // onProgress({ feature, id, received, total, percent }) periodically. Rejects on
-// size mismatch / network error and cleans up the temp file.
-function download(feature, id, onProgress) {
+// size mismatch / network error and cleans up the temp file. For Piper voices,
+// the tiny `.onnx.json` config sidecar is fetched first so a complete install
+// always has both files.
+async function download(feature, id, onProgress) {
+  const e = entry(feature, id);
+  if (!e) return Promise.reject(new Error(`Unknown model: ${feature}/${id}`));
+
+  // Piper: fetch the config sidecar first (small). If the main download later
+  // fails, isInstalled() still returns false (the .onnx is absent), so the
+  // dangling .json is harmless and will be overwritten on retry.
+  if (e.configUrl && e.configFile) {
+    const cp = configPath(feature, id);
+    await downloadSidecar(e.configUrl, cp);
+  }
+
+  return downloadModel(feature, id, onProgress);
+}
+
+// Download just the main model file (the large `.onnx`/`.bin`) with progress.
+function downloadModel(feature, id, onProgress) {
   const e = entry(feature, id);
   if (!e) return Promise.reject(new Error(`Unknown model: ${feature}/${id}`));
 
@@ -212,18 +297,23 @@ function cancel(feature, id) {
   return true;
 }
 
-// remove(feature, id) -> delete the file; returns boolean.
+// remove(feature, id) -> delete the file(s); returns boolean. Piper voices also
+// have a `.onnx.json` config sidecar, removed alongside the model.
 function remove(feature, id) {
   const p = modelPath(feature, id);
   if (!p) return false;
-  try { fs.unlinkSync(p); return true; }
-  catch { return false; }
+  let ok = false;
+  try { fs.unlinkSync(p); ok = true; } catch { /* */ }
+  const cp = configPath(feature, id);
+  if (cp) { try { fs.unlinkSync(cp); ok = true; } catch { /* */ } }
+  return ok;
 }
 
 module.exports = {
   MODELS,
   modelsDir,
   modelPath,
+  configPath,
   isInstalled,
   status,
   download,

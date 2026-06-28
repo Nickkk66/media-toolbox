@@ -617,6 +617,16 @@ body.reduce-motion .gh-fl-fill, body.reduce-motion .gh-fl-plane { transition: no
 .tr-hint { flex: 1; min-width: 240px; margin: 0; }
 .tr-foot #trRun { flex: none; }
 @media (max-width: 760px) { .tr-grid { grid-template-columns: 1fr; } }
+/* Text to Speech — text box + a two-column (voice · format) control row. */
+#ttsPanel { padding: var(--s22); }
+#ttsPanel .ai-notice { margin-bottom: var(--s15); }
+.tts-text { display: flex; flex-direction: column; gap: 6px; }
+.tts-text > span { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--graphite); }
+.tts-text textarea { background: #fff; border: 1px solid var(--steel); padding: 10px 12px; font-size: 13px; color: var(--ink); width: 100%; resize: vertical; min-height: 120px; line-height: 1.5; }
+.tts-text textarea:focus { outline: none; border-color: var(--ink); }
+body[data-theme="dark"] .tts-text textarea { background: #1e1e23; }
+#ttsPanel .tr-grid { grid-template-columns: minmax(180px, 1.4fr) minmax(150px, 1fr); }
+@media (max-width: 760px) { #ttsPanel .tr-grid { grid-template-columns: 1fr; } }
 .ai-fmt-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--graphite); }
 .ai-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .ai-check input { width: auto; }

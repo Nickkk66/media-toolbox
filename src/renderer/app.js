@@ -85,7 +85,7 @@ function customSelect(sel) {
 function enhanceSelects(root) { (root || document).querySelectorAll('select:not([data-cs])').forEach(customSelect); }
 function setHero(title, sub) { $('heroTitle').textContent = title; $('heroSub').textContent = sub; }
 
-const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'aiHubPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel'];
+const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'aiHubPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel', 'ttsPanel'];
 function hideAll() {
   PANELS.forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
   document.body.classList.remove('on-profile');
@@ -222,6 +222,7 @@ function openItem(item, kind) {
   if (item.engine === 'transcribe') return openTranscribe();
   if (item.engine === 'upscaleai') return openUpscaleAi();
   if (item.engine === 'removebg') return openRemoveBg();
+  if (item.engine === 'tts') return openTts();
   hideAll();
   $('toolHeader').classList.remove('hidden');
   $('toolName').textContent = item.label;
@@ -2474,6 +2475,7 @@ function aiModelRow(feature, m) {
 const AI_FEATURE_LABELS = {
   whisper: 'transcription models',
   bgremoval: 'background removal models',
+  tts: 'text-to-speech voices',
 };
 function renderAiModels(status) {
   const host = $('aiModels');
@@ -2559,6 +2561,7 @@ function settingsHtml(cat, s) {
     const whisperReady = caps.hasWhisper;
     const bgReady = caps.hasBgRemoval;
     const upscalerReady = caps.hasRealesrgan;
+    const piperReady = caps.hasPiper;
     return `
     <h3 class="set-h">on-device models</h3>
     <p class="set-note">download models for the local AI tools (transcription, background removal). models run entirely on your device — nothing is uploaded. larger models are slower but more accurate. you can remove any model to free up disk space.</p>
@@ -2573,6 +2576,10 @@ function settingsHtml(cat, s) {
     <div class="ai-engine">
       <span class="ai-dot ${upscalerReady ? 'on' : 'off'}"></span>
       <span>upscaler (Real-ESRGAN) — ${upscalerReady ? 'bundled · ready (no download needed)' : 'not found'}</span>
+    </div>
+    <div class="ai-engine">
+      <span class="ai-dot ${piperReady ? 'on' : 'off'}"></span>
+      <span>piper engine (text-to-speech) — ${piperReady ? 'engine ready' : 'not found'}</span>
     </div>
     <div class="ai-models" id="aiModels"><div class="set-note">loading models…</div></div>`;
   }
@@ -2851,6 +2858,9 @@ function refreshAiModelState() {
   try {
     if (!$('removebgPanel').classList.contains('hidden')) rbRefreshModels();
   } catch { /* */ }
+  try {
+    if (!$('ttsPanel').classList.contains('hidden')) ttsRefreshVoices();
+  } catch { /* */ }
   // Settings manager (only present while the Local AI tab is rendered).
   try {
     const host = $('aiModels');
@@ -2882,6 +2892,7 @@ function openAiHub() {
         if (which === 'transcribe') openTranscribe();
         else if (which === 'upscale') openUpscaleAi();
         else if (which === 'removebg') openRemoveBg();
+        else if (which === 'tts') openTts();
       });
     });
   }
@@ -3012,6 +3023,86 @@ function wireTranscribe() {
       $('trBar').classList.remove('indet');
       $('trStatus').textContent = 'Error: ' + ((e && e.message) || e); $('trStatus').className = 'fr-status error';
     } finally { trUpdateRun(); }
+  });
+}
+
+// ---------- Text to Speech (Piper) ----------
+// Lazy-wired on first open. Voice dropdown is filled from window.api.aimodels.list()
+// showing only INSTALLED tts voices; if none, a notice links to the model manager.
+// Generation runs on-device (works offline); only voice downloads need the network.
+const ttsState = { wired: false };
+async function openTts() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  state.currentTool = { id: 'tts', label: 'Text to Speech' }; updateFavBtn();
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Text to Speech';
+  setHero('Text to Speech', 'On-device narration with Piper voices — export WAV or MP3, fully offline');
+  $('ttsPanel').classList.remove('hidden');
+  if (!ttsState.wired) { wireTts(); ttsState.wired = true; }
+  enhanceSelects($('ttsPanel'));
+  const engineOk = !state.caps || state.caps.hasPiper !== false;
+  $('ttsNoEngine').classList.toggle('hidden', engineOk);
+  await ttsRefreshVoices();
+}
+async function ttsRefreshVoices() {
+  const sel = $('ttsVoice');
+  const engineOk = !state.caps || state.caps.hasPiper !== false;
+  let installed = [];
+  try {
+    const all = (window.api.aimodels && await window.api.aimodels.list()) || [];
+    const list = Array.isArray(all)
+      ? all.filter((m) => m.feature === 'tts' || m.kind === 'tts')
+      : (all.tts || []);
+    installed = (list || []).filter((m) => m && (m.installed === true || m.isInstalled === true));
+  } catch { installed = []; }
+  // The no-voice notice only shows when the engine itself is OK (otherwise the
+  // engine notice covers it).
+  $('ttsNoModel').classList.toggle('hidden', !(engineOk && !installed.length));
+  if (!engineOk || !installed.length) {
+    sel.innerHTML = '<option value="">— none installed —</option>';
+  } else {
+    sel.innerHTML = installed.map((m) => `<option value="${mtbEsc(m.id)}">${mtbEsc(m.label || m.id)}</option>`).join('');
+  }
+  if (sel._csRender) sel._csRender();
+  ttsUpdateRun();
+}
+function ttsUpdateRun() {
+  const engineOk = !state.caps || state.caps.hasPiper !== false;
+  const hasVoice = !!($('ttsVoice').value);
+  const hasText = !!($('ttsText').value.trim());
+  $('ttsRun').disabled = !(engineOk && hasVoice && hasText);
+}
+function wireTts() {
+  window.api.onAiTtsProgress((d) => {
+    if (!d) return;
+    $('ttsProgress').classList.remove('hidden'); $('ttsBar').classList.add('indet');
+    $('ttsStatus').textContent = d.stage === 'encode' ? 'Encoding MP3…' : 'Synthesizing speech…';
+    $('ttsStatus').className = 'fr-status';
+  });
+  $('ttsText').addEventListener('input', ttsUpdateRun);
+  $('ttsVoice').addEventListener('change', ttsUpdateRun);
+  // The "no voice" notice is a shortcut to the model manager.
+  const ttsNotice = $('ttsNoModel');
+  if (ttsNotice) { ttsNotice.classList.add('clickable'); ttsNotice.addEventListener('click', () => openSettings('localai')); }
+  $('ttsRun').addEventListener('click', async () => {
+    const text = $('ttsText').value.trim(); if (!text) return;
+    const voiceId = $('ttsVoice').value; if (!voiceId) return;
+    const format = $('ttsFormat').value || 'wav';
+    $('ttsRun').disabled = true;
+    $('ttsProgress').classList.remove('hidden'); $('ttsBar').classList.add('indet');
+    $('ttsStatus').textContent = 'Synthesizing speech…'; $('ttsStatus').className = 'fr-status'; $('ttsStatus').onclick = null;
+    aiResultDeleteHide('ttsStatus');
+    try {
+      const res = await window.api.aiTts({ text, voiceId, format, outputDir: state.outputDir });
+      $('ttsBar').classList.remove('indet'); $('ttsBar').style.width = '100%';
+      $('ttsStatus').textContent = `Saved (${fmtBytes(res.outSize)}) — click to open`; $('ttsStatus').className = 'fr-status done';
+      $('ttsStatus').onclick = () => window.api.showItem(res.outputPath);
+      aiResultDelete('ttsStatus', res.outputPath);
+      toast('Speech ready', { path: res.outputPath });
+      try { addRecent({ path: res.outputPath }); } catch { /* */ }
+    } catch (e) {
+      $('ttsBar').classList.remove('indet');
+      $('ttsStatus').textContent = 'Error: ' + ((e && e.message) || e); $('ttsStatus').className = 'fr-status error';
+    } finally { ttsUpdateRun(); }
   });
 }
 

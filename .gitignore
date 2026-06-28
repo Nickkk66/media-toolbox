@@ -8,6 +8,7 @@ vendor/qpdf/*.dll
 vendor/exiftool/
 vendor/realesrgan/
 vendor/whisper/
+vendor/piper/
 *.log
 # Bundled demo media (copyrighted; kept local only)
 src/songs/
