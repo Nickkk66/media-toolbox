@@ -383,6 +383,145 @@
         </div>
       </div>
 
+      <!-- Crop PDF — draw a crop box on the page-1 preview, apply to all pages -->
+      <div id="pdfCropPanel" class="panel hidden">
+        <div class="pdf-wrap">
+          <div class="pdf-side">
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">input</div>
+              <div class="fx-pnl-b">
+                <button id="pcLoad" class="fx-btn fx-btn-wide">choose PDF</button>
+                <span class="fx-input-name" id="pcName"></span>
+                <div id="pcNotice" class="pdf-notice hidden">Cropping needs Ghostscript, which isn’t available in this build.</div>
+              </div>
+            </div>
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">crop box</div>
+              <div class="fx-pnl-b">
+                <p class="hint">Drag on the page to draw the area to keep. The crop is applied to every page.</p>
+                <div class="pdf-actions">
+                  <button id="pcResetBox" class="fx-btn" disabled>clear box</button>
+                  <button id="pcApply" class="btn primary" disabled>Crop PDF <span class="ic" data-icon="download"></span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="pdf-main">
+            <div class="pb-pane-h">page preview — drag to set the crop area</div>
+            <div class="pdf-stage">
+              <div id="pcHint" class="fx-hint">Choose a PDF to begin.</div>
+              <canvas id="pcCanvas" class="pdf-canvas"></canvas>
+            </div>
+            <div class="fx-bar"><span class="muted" id="pcStatus">idle</span></div>
+            <div id="pcResult" class="pb-result hidden">
+              <span class="pb-result-name" id="pcResultName"></span>
+              <span class="pb-result-actions">
+                <button id="pcDelete" class="pb-ic-btn" title="discard result"><span class="ic" data-icon="trash"></span></button>
+                <button id="pcFolder" class="pb-ic-btn" title="open location"><span class="ic" data-icon="folder"></span></button>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Organize PDF — thumbnail grid: reorder, rotate, remove pages -->
+      <div id="pdfOrganizePanel" class="panel hidden">
+        <div class="pdf-org-wrap">
+          <div class="pdf-org-bar">
+            <button id="poLoad" class="fx-btn">choose PDF</button>
+            <span class="fx-input-name" id="poName"></span>
+            <span class="muted" id="poStatus">idle</span>
+            <button id="poApply" class="btn primary" disabled>Save PDF <span class="ic" data-icon="download"></span></button>
+          </div>
+          <div id="poNotice" class="pdf-notice hidden">Organizing needs qpdf, which isn’t available in this build.</div>
+          <p class="hint" id="poHint">Choose a PDF to load its pages. Reorder with ‹ ›, rotate, or remove pages, then Save.</p>
+          <div id="poGrid" class="po-grid"></div>
+          <div id="poResult" class="pb-result hidden">
+            <span class="pb-result-name" id="poResultName"></span>
+            <span class="pb-result-actions">
+              <button id="poDelete" class="pb-ic-btn" title="discard result"><span class="ic" data-icon="trash"></span></button>
+              <button id="poFolder" class="pb-ic-btn" title="open location"><span class="ic" data-icon="folder"></span></button>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Watermark Remover — client-side brush/drag canvas editor -->
+      <div id="watermarkPanel" class="panel hidden">
+        <div class="pb-wrap">
+          <div class="pb-side">
+
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">input</div>
+              <div class="fx-pnl-b">
+                <button id="wmLoad" class="fx-btn fx-btn-wide">choose image</button>
+                <span class="fx-input-name" id="wmName"></span>
+              </div>
+            </div>
+
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">effect</div>
+              <div class="fx-pnl-b">
+                <label class="fx-field"><span>effect type</span><select id="wmEffect"></select></label>
+                <div class="fx-field"><span>selection</span>
+                  <div id="wmSelMode" class="fx-seg">
+                    <button type="button" class="fx-seg-btn" data-val="rect">rectangle</button>
+                    <button type="button" class="fx-seg-btn" data-val="brush">brush</button>
+                  </div>
+                </div>
+                <label class="fx-field"><span>brush size / strength <b id="wmRadiusVal">18</b></span>
+                  <input id="wmRadius" class="perf-range" type="range" min="2" max="80" value="18" /></label>
+                <p class="hint">Patch / Remove fills the area from surrounding pixels — paint over the watermark to erase it.</p>
+              </div>
+            </div>
+
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">history</div>
+              <div class="fx-pnl-b">
+                <div class="pb-history">
+                  <button id="wmUndo" class="fx-btn" title="undo (Ctrl+Z)" disabled>‹ back</button>
+                  <button id="wmRedo" class="fx-btn" title="redo (Ctrl+Y)" disabled>forward ›</button>
+                  <button id="wmClear" class="fx-btn" disabled>clear</button>
+                </div>
+                <p class="hint">Draw boxes or paint over the watermark on the left. Ctrl+Z / Ctrl+Y to undo / redo.</p>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="pb-main">
+            <div class="pb-panes">
+              <div class="pb-pane">
+                <div class="pb-pane-h">source — mark the watermark</div>
+                <div class="pb-stage">
+                  <div id="wmHint" class="fx-hint">Choose an image to begin.</div>
+                  <canvas id="wmSrc" class="pb-canvas"></canvas>
+                </div>
+              </div>
+              <div class="pb-pane">
+                <div class="pb-pane-h">output — live preview</div>
+                <div class="pb-stage">
+                  <canvas id="wmOut" class="pb-canvas"></canvas>
+                </div>
+              </div>
+            </div>
+            <div class="fx-bar">
+              <span class="muted" id="wmStatus">idle</span>
+              <div class="fx-export">
+                <button id="wmExport" class="btn primary" disabled>Output / Export <span class="ic" data-icon="download"></span></button>
+              </div>
+            </div>
+            <div id="wmResult" class="pb-result hidden">
+              <span class="pb-result-name" id="wmResultName"></span>
+              <span class="pb-result-actions">
+                <button id="wmDelete" class="pb-ic-btn" title="discard result"><span class="ic" data-icon="trash"></span></button>
+                <button id="wmFolder" class="pb-ic-btn" title="open location"><span class="ic" data-icon="folder"></span></button>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- AI Tools hub (home for the local AI tools) -->
       <div id="aiHubPanel" class="panel hidden">
         <div class="home-grid ai-hub">
@@ -475,11 +614,17 @@
           <span class="muted" id="rbName"></span>
         </div>
         <div class="ai-wrap">
-          <div class="st-preview ai-preview"><canvas id="rbPreview" class="ai-img hidden"></canvas></div>
+          <div class="st-preview ai-preview rb-stage"><canvas id="rbPreview" class="ai-img rb-canvas hidden"></canvas></div>
           <div class="ai-side">
             <div id="rbNoEngine" class="ai-notice hidden">AI runtime unavailable — background removal needs the onnxruntime engine.</div>
             <div id="rbNoModel" class="ai-notice hidden">No background-removal model — download one in Settings → Local AI.</div>
-            <label class="field"><span>Model</span><select id="rbModel"></select></label>
+            <label class="field"><span>Mode</span>
+              <div id="rbMode" class="fx-seg">
+                <button type="button" class="fx-seg-btn" data-val="auto">Automatic</button>
+                <button type="button" class="fx-seg-btn" data-val="manual">Manual</button>
+              </div>
+            </label>
+            <label class="field" id="rbModelField"><span>Model</span><select id="rbModel"></select></label>
             <label class="field"><span>Background</span>
               <select id="rbBg">
                 <option value="transparent" selected>Transparent</option>
@@ -489,9 +634,40 @@
               </select>
             </label>
             <label class="field" id="rbColorField" style="display:none"><span>Color</span><input id="rbColor" type="color" value="#0071bb"/></label>
-            <p class="hint">Output is a transparent PNG (or filled with the chosen background).</p>
+            <p class="hint" id="rbAutoHint">Automatic uses a local AI model. After running, switch to a refine brush below to clean up the edges.</p>
             <button id="rbRun" class="btn primary big" disabled>Remove background <span class="ic" data-icon="arrowRight"></span></button>
             <div id="rbProgress" class="yt-progress hidden"><div class="bar"><div id="rbBar" class="bar-fill"></div></div><div id="rbStatus" class="fr-status"></div></div>
+
+            <div id="rbRefine" class="rb-refine hidden">
+              <div class="fx-pnl">
+                <div class="fx-pnl-h">refine — brush the mask</div>
+                <div class="fx-pnl-b">
+                  <div class="fx-field"><span>brush</span>
+                    <div id="rbBrush" class="fx-seg">
+                      <button type="button" class="fx-seg-btn" data-val="add">add</button>
+                      <button type="button" class="fx-seg-btn" data-val="erase">erase</button>
+                      <button type="button" class="fx-seg-btn" data-val="blur">blur edges</button>
+                    </div>
+                  </div>
+                  <label class="fx-field"><span>brush size <b id="rbRadiusVal">24</b></span>
+                    <input id="rbRadius" class="perf-range" type="range" min="4" max="120" value="24" /></label>
+                  <div class="pb-history">
+                    <button id="rbUndo" class="fx-btn" title="undo (Ctrl+Z)" disabled>‹ back</button>
+                    <button id="rbRedo" class="fx-btn" title="redo (Ctrl+Y)" disabled>forward ›</button>
+                    <button id="rbClear" class="fx-btn" disabled>clear edits</button>
+                  </div>
+                  <p class="hint">Add restores foreground · Erase removes to background · Blur softens the mask edge. Ctrl+Z / Ctrl+Y.</p>
+                  <button id="rbExport" class="btn primary big" disabled>Export PNG <span class="ic" data-icon="download"></span></button>
+                </div>
+              </div>
+              <div id="rbResult" class="pb-result hidden">
+                <span class="pb-result-name" id="rbResultName"></span>
+                <span class="pb-result-actions">
+                  <button id="rbDelete2" class="pb-ic-btn" title="discard result"><span class="ic" data-icon="trash"></span></button>
+                  <button id="rbFolder" class="pb-ic-btn" title="open location"><span class="ic" data-icon="folder"></span></button>
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -508,6 +684,10 @@
               <option value="wav" selected>WAV</option>
               <option value="mp3">MP3</option>
             </select>
+          </label>
+          <label class="field tts-speed-field">
+            <span>Speed <em id="ttsSpeedVal" class="tts-speed-val">1.0×</em></span>
+            <input id="ttsSpeed" class="perf-range" type="range" min="0.5" max="2" step="0.1" value="1" />
           </label>
         </div>
         <div class="tr-foot">

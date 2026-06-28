@@ -7,6 +7,7 @@ const fs = require('fs');
 const encoders = require('./ffmpeg/encoders');
 const ffmpegPath = require('./ffmpeg/ffmpegPath');
 const media = require('./media');
+const pdfedit = require('./media/pdfedit');
 const youtube = require('./youtube');
 const spotify = require('./spotify');
 const aiModels = require('./aiModels');
@@ -193,10 +194,19 @@ function registerIpc(getWindow) {
         if (err) return resolve({});
         try {
           const j = JSON.parse(stdout || '{}');
-          const tags = (j.format && j.format.tags) || {};
-          // ffprobe tag casing varies; normalize keys to lowercase.
+          // Tags can live on the container (format.tags) OR on a stream's tags
+          // (common for some MP3/OGG/M4A taggers), and ffprobe casing varies
+          // (title/TITLE/Title). Merge ALL sources into one lowercased map:
+          // stream tags first (first-seen wins), then format tags last so the
+          // container value wins on conflict.
           const low = {};
-          for (const k of Object.keys(tags)) low[k.toLowerCase()] = tags[k];
+          const mergeFirst = (tags) => {
+            if (!tags || typeof tags !== 'object') return;
+            for (const k of Object.keys(tags)) { const lk = k.toLowerCase(); if (!(lk in low)) low[lk] = tags[k]; }
+          };
+          for (const s of (Array.isArray(j.streams) ? j.streams : [])) mergeFirst(s.tags);
+          const fmtTags = (j.format && j.format.tags) || {};
+          for (const k of Object.keys(fmtTags)) low[k.toLowerCase()] = fmtTags[k];
           const dur = j.format && j.format.duration ? Math.round(parseFloat(j.format.duration)) : 0;
           const hasCover = Array.isArray(j.streams) && j.streams.some((s) => s.disposition && s.disposition.attached_pic);
           resolve({ tags: low, durationSec: dur || 0, hasCover });
@@ -222,9 +232,12 @@ function registerIpc(getWindow) {
       const info = await probeTags(file);
       const tags = info.tags || {};
       const baseName = path.basename(file).replace(AUDIO_RE, '');
-      const title = (tags.title && tags.title.trim()) || baseName;
-      const artist = (tags.artist || tags.album_artist || '').trim();
-      const album = (tags.album || '').trim();
+      // Prefer the EMBEDDED title; only fall back to the filename when there is
+      // genuinely no title tag. Cover a few common aliases just in case.
+      const pick = (...keys) => { for (const k of keys) { const v = tags[k]; if (v != null && String(v).trim()) return String(v).trim(); } return ''; };
+      const title = pick('title', 'track_title', 'song') || baseName;
+      const artist = pick('artist', 'album_artist', 'albumartist', 'author', 'performer', 'composer');
+      const album = pick('album');
       let cover = '';
       if (info.hasCover) { try { cover = await extractCover(file, i); } catch { /* */ } }
       if (!cover) {
@@ -317,6 +330,33 @@ function registerIpc(getWindow) {
     });
     let outSize = 0; try { outSize = fs.statSync(out).size; } catch { /* */ }
     return { outputPath: out, outSize };
+  });
+
+  // ---- Visual PDF tools (Crop PDF / Organize PDF) ----
+  // Render every page to a small preview PNG + read page sizes (points).
+  ipcMain.handle('pdf:thumbs', async (_e, { inputPath }) => {
+    return pdfedit.thumbs(inputPath);
+  });
+
+  // Set the CropBox on all pages (coordinates in PDF points, origin bottom-left).
+  ipcMain.handle('pdf:crop', async (_e, { inputPath, cropPt, outputDir }) => {
+    if (!inputPath) throw new Error('No input PDF.');
+    const parsed = path.parse(inputPath);
+    const dir = resolveOutputDir({ outputDir }, parsed.dir);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
+    const out = uniqueOutput(dir, parsed.name + '_cropped', 'pdf', true);
+    return pdfedit.crop({ inputPath, cropPt, outputPath: out });
+  });
+
+  // Reorder / drop / rotate pages. `order` is original 1-based page numbers in
+  // the new order; `rotations` maps output position (1-based) -> degrees.
+  ipcMain.handle('pdf:organize', async (_e, { inputPath, order, rotations, outputDir }) => {
+    if (!inputPath) throw new Error('No input PDF.');
+    const parsed = path.parse(inputPath);
+    const dir = resolveOutputDir({ outputDir }, parsed.dir);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
+    const out = uniqueOutput(dir, parsed.name + '_organized', 'pdf', true);
+    return pdfedit.organize({ inputPath, order, rotations, outputPath: out });
   });
 
   // Batch rename: rename a set of files on disk. Each item is { from, to }
@@ -895,7 +935,7 @@ function registerIpc(getWindow) {
   // Synthesize → preview: produce the final-format file in a TEMP dir and return
   // its path. Nothing is written to the user's output folder until they hit
   // Download (ai:tts:save). The temp dir is wiped on quit (see main.js).
-  ipcMain.handle('ai:tts', async (_e, { text, voiceId, format }) => {
+  ipcMain.handle('ai:tts', async (_e, { text, voiceId, format, lengthScale, speed }) => {
     if (!ffmpegPath.hasPiper()) {
       throw new Error('Text-to-speech engine (Piper) is not available in this build.');
     }
@@ -912,6 +952,14 @@ function registerIpc(getWindow) {
 
     const fmt = (format === 'mp3') ? 'mp3' : 'wav';
 
+    // Speed → Piper's --length-scale. Piper length-scale is INVERSE of speed:
+    // HIGHER length-scale = SLOWER speech. The renderer's "speed" slider runs
+    // 0.5×–2× (default 1.0); length-scale = 1/speed. If a raw lengthScale is
+    // passed it wins. Clamp to a sane range so a bad value can't hang piper.
+    let ls = Number(lengthScale);
+    if (!(ls > 0)) { const sp = Number(speed); ls = (sp > 0) ? 1 / sp : 1; }
+    ls = Math.max(0.25, Math.min(4, ls));
+
     // Fresh temp dir; clear the previous preview so only the latest one lingers.
     cleanupTtsTemp();
     const tmpDir = ttsTempDir();
@@ -923,7 +971,7 @@ function registerIpc(getWindow) {
     // Step 1: synthesize the WAV with Piper (text piped to stdin).
     await new Promise((resolve, reject) => {
       let stderrTail = '';
-      const proc = spawn(ffmpegPath.piper, ['-m', voiceFile, '-f', wavPath], { windowsHide: true });
+      const proc = spawn(ffmpegPath.piper, ['-m', voiceFile, '-f', wavPath, '--length-scale', String(ls)], { windowsHide: true });
       proc.stderr.on('data', (b) => { stderrTail = (stderrTail + b.toString()).slice(-4000); });
       proc.on('error', (err) => reject(new Error(err.message)));
       proc.on('close', (code) => {
@@ -968,4 +1016,6 @@ function registerIpc(getWindow) {
   });
 }
 
-module.exports = { registerIpc, cleanupFpsTemp, cleanupTtsTemp };
+function cleanupPdfThumbs() { try { pdfedit.cleanupThumbs(); } catch { /* */ } }
+
+module.exports = { registerIpc, cleanupFpsTemp, cleanupTtsTemp, cleanupPdfThumbs };

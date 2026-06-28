@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('api', {
 
   startJob: (spec) => ipcRenderer.invoke('job:start', spec),
   pdfMerge: (inputs, outputDir) => ipcRenderer.invoke('pdf:merge', { inputs, outputDir }),
+  pdfThumbs: (inputPath) => ipcRenderer.invoke('pdf:thumbs', { inputPath }),
+  pdfCrop: (opts) => ipcRenderer.invoke('pdf:crop', opts),
+  pdfOrganize: (opts) => ipcRenderer.invoke('pdf:organize', opts),
   cancelJob: (jobId) => ipcRenderer.invoke('job:cancel', jobId),
   cancelAll: () => ipcRenderer.invoke('job:cancelAll'),
   pauseJob: (jobId) => ipcRenderer.invoke('job:pause', jobId),

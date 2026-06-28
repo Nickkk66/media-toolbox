@@ -27,8 +27,13 @@ function rembgUrl(file) { return REMBG + file; }
 
 // Piper TTS voices live on HuggingFace `rhasspy/piper-voices`. Each voice is a
 // PAIR: an `.onnx` model + a tiny `.onnx.json` config (same basename).
-const PIPER = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/';
-function piperUrl(rel) { return PIPER + rel; }
+// PIPER_BASE is the single source of truth for the download host: to mirror the
+// voices to this project's own GitHub release later, swap this one constant to
+// e.g. 'https://github.com/<owner>/<repo>/releases/download/voices/' (the pair
+// download already handles configUrl alongside the model).
+const PIPER_BASE = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/';
+const PIPER = PIPER_BASE;
+function piperUrl(rel) { return PIPER_BASE + rel; }
 
 // ---- Manifest -------------------------------------------------------------
 // Each entry: { id, label, file, url, sizeBytes, tier }. Real-ESRGAN models are
@@ -51,11 +56,30 @@ const MODELS = {
   // `configUrl` -> <name>.onnx.json. `sizeBytes` is the .onnx size (the json
   // sidecar is a few KB). `file` is the .onnx basename inside models/tts/.
   tts: [
-    { id: 'en_US-amy-medium',    label: 'Amy · US English (medium)',    rel: 'en/en_US/amy/medium/en_US-amy-medium.onnx',       sizeBytes: 63201294, tier: 'balanced', host: 'piper' },
-    { id: 'en_US-ryan-medium',   label: 'Ryan · US English (medium)',   rel: 'en/en_US/ryan/medium/en_US-ryan-medium.onnx',     sizeBytes: 63201294, tier: 'balanced', host: 'piper' },
-    { id: 'en_US-lessac-medium', label: 'Lessac · US English (medium)', rel: 'en/en_US/lessac/medium/en_US-lessac-medium.onnx', sizeBytes: 63201294, tier: 'balanced', host: 'piper' },
-    { id: 'en_GB-alan-medium',   label: 'Alan · UK English (medium)',   rel: 'en/en_GB/alan/medium/en_GB-alan-medium.onnx',     sizeBytes: 63201294, tier: 'balanced', host: 'piper' },
-    { id: 'en_US-amy-low',       label: 'Amy · US English (low, fast)', rel: 'en/en_US/amy/low/en_US-amy-low.onnx',             sizeBytes: 63104526, tier: 'fast',     host: 'piper' },
+    // --- US English ---
+    { id: 'en_US-amy-low',         label: 'Amy · US English (low, fast)',     rel: 'en/en_US/amy/low/en_US-amy-low.onnx',                 sizeBytes: 63104526,  tier: 'fast',     host: 'piper' },
+    { id: 'en_US-amy-medium',      label: 'Amy · US English (medium)',        rel: 'en/en_US/amy/medium/en_US-amy-medium.onnx',           sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
+    { id: 'en_US-ryan-medium',     label: 'Ryan · US English (medium)',       rel: 'en/en_US/ryan/medium/en_US-ryan-medium.onnx',         sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
+    { id: 'en_US-ryan-high',       label: 'Ryan · US English (high)',         rel: 'en/en_US/ryan/high/en_US-ryan-high.onnx',             sizeBytes: 113912084, tier: 'high',     host: 'piper' },
+    { id: 'en_US-lessac-medium',   label: 'Lessac · US English (medium)',     rel: 'en/en_US/lessac/medium/en_US-lessac-medium.onnx',     sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
+    { id: 'en_US-lessac-high',     label: 'Lessac · US English (high)',       rel: 'en/en_US/lessac/high/en_US-lessac-high.onnx',         sizeBytes: 113912084, tier: 'high',     host: 'piper' },
+    { id: 'en_US-libritts-high',   label: 'LibriTTS · US English (high)',     rel: 'en/en_US/libritts/high/en_US-libritts-high.onnx',     sizeBytes: 113912084, tier: 'high',     host: 'piper' },
+    { id: 'en_US-kristin-medium',  label: 'Kristin · US English (medium)',    rel: 'en/en_US/kristin/medium/en_US-kristin-medium.onnx',   sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
+    // --- UK English ---
+    { id: 'en_GB-alan-medium',     label: 'Alan · UK English (medium)',       rel: 'en/en_GB/alan/medium/en_GB-alan-medium.onnx',         sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
+    { id: 'en_GB-cori-medium',     label: 'Cori · UK English (medium)',       rel: 'en/en_GB/cori/medium/en_GB-cori-medium.onnx',         sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
+    { id: 'en_GB-northern_english_male-medium', label: 'Northern English · UK (medium)', rel: 'en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx', sizeBytes: 63201294, tier: 'balanced', host: 'piper' },
+    // --- Spanish ---
+    { id: 'es_ES-davefx-medium',   label: 'DaveFX · Spanish (Spain, medium)', rel: 'es/es_ES/davefx/medium/es_ES-davefx-medium.onnx',     sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
+    { id: 'es_MX-claude-high',     label: 'Claude · Spanish (Mexico, high)',  rel: 'es/es_MX/claude/high/es_MX-claude-high.onnx',         sizeBytes: 113912084, tier: 'high',     host: 'piper' },
+    // --- French ---
+    { id: 'fr_FR-siwis-medium',    label: 'Siwis · French (medium)',          rel: 'fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx',       sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
+    { id: 'fr_FR-upmc-medium',     label: 'UPMC · French (medium)',           rel: 'fr/fr_FR/upmc/medium/fr_FR-upmc-medium.onnx',         sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
+    // --- German ---
+    { id: 'de_DE-thorsten-medium', label: 'Thorsten · German (medium)',       rel: 'de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx', sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
+    { id: 'de_DE-kerstin-low',     label: 'Kerstin · German (low, fast)',     rel: 'de/de_DE/kerstin/low/de_DE-kerstin-low.onnx',         sizeBytes: 63104526,  tier: 'fast',     host: 'piper' },
+    // --- Italian ---
+    { id: 'it_IT-paola-medium',    label: 'Paola · Italian (medium)',         rel: 'it/it_IT/paola/medium/it_IT-paola-medium.onnx',       sizeBytes: 63201294,  tier: 'balanced', host: 'piper' },
   ],
 };
 // Fill in each entry's download URL + (for piper) its config sidecar URL.
@@ -311,6 +335,7 @@ function remove(feature, id) {
 
 module.exports = {
   MODELS,
+  PIPER_BASE,
   modelsDir,
   modelPath,
   configPath,

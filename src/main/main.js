@@ -6,7 +6,7 @@ const { execFile } = require('child_process');
 
 const fs = require('fs');
 const ffmpegPath = require('./ffmpeg/ffmpegPath');
-const { registerIpc, cleanupFpsTemp, cleanupTtsTemp } = require('./ipc');
+const { registerIpc, cleanupFpsTemp, cleanupTtsTemp, cleanupPdfThumbs } = require('./ipc');
 const aiModels = require('./aiModels');
 
 function createWindow() {
@@ -129,7 +129,7 @@ if (!gotLock) {
 }
 
 // Delete the FPS-changer and TTS preview temp caches on quit so previews never linger.
-app.on('before-quit', () => { try { cleanupFpsTemp(); } catch { /* */ } try { cleanupTtsTemp(); } catch { /* */ } });
+app.on('before-quit', () => { try { cleanupFpsTemp(); } catch { /* */ } try { cleanupTtsTemp(); } catch { /* */ } try { cleanupPdfThumbs(); } catch { /* */ } });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 

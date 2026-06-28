@@ -85,7 +85,7 @@ function customSelect(sel) {
 function enhanceSelects(root) { (root || document).querySelectorAll('select:not([data-cs])').forEach(customSelect); }
 function setHero(title, sub) { $('heroTitle').textContent = title; $('heroSub').textContent = sub; }
 
-const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'spotifyPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'pbPanel', 'aiHubPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel', 'ttsPanel'];
+const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'spotifyPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'pbPanel', 'pdfCropPanel', 'pdfOrganizePanel', 'watermarkPanel', 'aiHubPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel', 'ttsPanel'];
 function hideAll() {
   PANELS.forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
   document.body.classList.remove('on-profile');
@@ -222,6 +222,9 @@ function openItem(item, kind) {
   if (item.engine === 'batchrename') return openBatchRename();
   if (item.engine === 'photofx') return openPhotoEffects();
   if (item.engine === 'privacyblur') return openPrivacyBlur();
+  if (item.engine === 'pdfcrop') return openPdfCrop();
+  if (item.engine === 'pdforganize') return openPdfOrganize();
+  if (item.engine === 'watermark') return openWatermark();
   if (item.engine === 'transcribe') return openTranscribe();
   if (item.engine === 'upscaleai') return openUpscaleAi();
   if (item.engine === 'removebg') return openRemoveBg();
@@ -1748,6 +1751,708 @@ function pbDeleteResult() {
   $('pbResultName').textContent = '';
 }
 
+// ============================================================================
+// Crop PDF — pick a PDF, show page-1 thumbnail, drag a crop rectangle over it,
+// convert the box from display px → PDF points (origin bottom-left) and set the
+// CropBox on every page via ghostscript (pdf:crop). Region-drag machinery mirrors
+// the Privacy Blur rectangle selection.
+// ============================================================================
+const pcState = { wired: false, path: '', page: null, scale: 1, drag: null, rect: null, busy: false, lastOut: '' };
+let pcCv = null, pcCtx = null, pcImg = null;
+
+function openPdfCrop() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  state.currentTool = { id: 'crop-pdf', label: 'Crop PDF' }; updateFavBtn();
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Crop PDF';
+  setHero('Crop PDF', 'Trim margins — draw a crop box on the page, apply it to the whole document');
+  $('pdfCropPanel').classList.remove('hidden');
+  if (!pcState.wired) { wirePdfCrop(); pcState.wired = true; }
+  pcUpdateAvail();
+  pcReset();
+}
+
+function pcUpdateAvail() {
+  const ok = !state.caps || state.caps.hasGhostscript;
+  const note = $('pcNotice');
+  if (note) note.classList.toggle('hidden', !!ok);
+  $('pcLoad').disabled = !ok;
+  if (!ok) pcSetActions(false);
+}
+
+function wirePdfCrop() {
+  pcCv = $('pcCanvas'); pcCtx = pcCv.getContext('2d');
+  $('pcLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
+    const pdf = paths.find((p) => /\.pdf$/i.test(p)) || paths[0];
+    pcLoadPdf(pdf);
+  });
+  $('pcApply').addEventListener('click', pcApply);
+  $('pcResetBox').addEventListener('click', () => { pcState.rect = null; pcDraw(); pcSetActions(true); });
+  $('pcDelete').addEventListener('click', async () => {
+    if (pcState.lastOut) { await window.api.deleteFile(pcState.lastOut); pcState.lastOut = ''; }
+    $('pcResult').classList.add('hidden'); $('pcStatus').textContent = 'result discarded';
+  });
+  $('pcFolder').addEventListener('click', () => { if (pcState.lastOut) window.api.showItem(pcState.lastOut); });
+  pcCv.addEventListener('mousedown', pcDown);
+  window.addEventListener('mousemove', pcMove);
+  window.addEventListener('mouseup', pcUp);
+}
+
+function pcReset() {
+  pcState.path = ''; pcState.page = null; pcState.rect = null; pcState.lastOut = '';
+  pcImg = null;
+  $('pcName').textContent = '';
+  $('pcHint').classList.remove('hidden');
+  $('pcResult').classList.add('hidden');
+  $('pcStatus').textContent = 'idle';
+  if (pcCv) { pcCv.width = 0; pcCv.height = 0; }
+  pcSetActions(false);
+}
+
+function pcSetActions(on) {
+  $('pcApply').disabled = !on || !pcState.rect || pcState.busy;
+  $('pcResetBox').disabled = !on || !pcState.rect;
+}
+
+async function pcLoadPdf(pdfPath) {
+  pcReset();
+  pcState.path = pdfPath;
+  $('pcName').textContent = baseName(pdfPath);
+  $('pcStatus').textContent = 'rendering preview…';
+  try {
+    const res = await window.api.pdfThumbs(pdfPath);
+    if (!res || !res.pages || !res.pages.length) throw new Error('No pages found.');
+    pcState.page = res.pages[0];
+    pcState.count = res.count;
+    const img = new Image();
+    img.onload = () => {
+      pcImg = img;
+      $('pcHint').classList.add('hidden');
+      pcDraw();
+      $('pcStatus').textContent = `${res.count} page(s) · ${Math.round(pcState.page.wPt)}×${Math.round(pcState.page.hPt)} pt — drag to set crop`;
+      pcSetActions(true);
+    };
+    img.onerror = () => { $('pcStatus').textContent = 'Could not load preview image.'; };
+    img.src = pcState.page.thumb;
+  } catch (err) {
+    $('pcStatus').textContent = (err && err.message) || 'Failed to render preview.';
+  }
+}
+
+// Fit the page thumbnail into a max display size, record px→image scale.
+function pcFit() {
+  const MAX = 520;
+  const iw = pcImg.naturalWidth, ih = pcImg.naturalHeight;
+  let w = iw, h = ih;
+  if (w > MAX || h > MAX) { const s = MAX / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+  return { w, h };
+}
+
+function pcDraw() {
+  if (!pcImg) return;
+  const { w, h } = pcFit();
+  pcCv.width = w; pcCv.height = h;
+  pcCtx.clearRect(0, 0, w, h);
+  pcCtx.drawImage(pcImg, 0, 0, w, h);
+  const r = pcState.rect;
+  if (r) {
+    // dim everything outside the crop box
+    pcCtx.save();
+    pcCtx.fillStyle = 'rgba(0,0,0,0.45)';
+    pcCtx.beginPath();
+    pcCtx.rect(0, 0, w, h);
+    pcCtx.rect(r.x, r.y, r.w, r.h);
+    pcCtx.fill('evenodd');
+    pcCtx.restore();
+    pcCtx.strokeStyle = '#0071bb'; pcCtx.lineWidth = 1.5;
+    pcCtx.strokeRect(r.x + 0.5, r.y + 0.5, r.w, r.h);
+  }
+}
+
+function pcPos(e) {
+  const b = pcCv.getBoundingClientRect();
+  const x = (e.clientX - b.left) * (pcCv.width / b.width);
+  const y = (e.clientY - b.top) * (pcCv.height / b.height);
+  return { x: Math.max(0, Math.min(pcCv.width, x)), y: Math.max(0, Math.min(pcCv.height, y)) };
+}
+function pcDown(e) {
+  if (!pcImg) return;
+  e.preventDefault();
+  pcState.drag = pcPos(e); pcState.rect = null; pcDraw();
+}
+function pcMove(e) {
+  if (!pcState.drag) return;
+  const a = pcState.drag, b = pcPos(e);
+  pcState.rect = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) };
+  pcDraw();
+}
+function pcUp() {
+  if (!pcState.drag) return;
+  pcState.drag = null;
+  const r = pcState.rect;
+  if (!r || r.w < 4 || r.h < 4) { pcState.rect = null; pcDraw(); }
+  pcSetActions(true);
+}
+
+// Map the display-px rectangle to PDF points. Canvas y grows downward; PDF
+// origin is bottom-left, so flip y. Scale by page points / displayed pixels.
+function pcRectToPoints() {
+  const r = pcState.rect; if (!r) return null;
+  const sx = pcState.page.wPt / pcCv.width;
+  const sy = pcState.page.hPt / pcCv.height;
+  const x0 = r.x * sx;
+  const x1 = (r.x + r.w) * sx;
+  // top of the box (smaller canvas y) is the HIGHER pdf-y.
+  const y1 = (pcCv.height - r.y) * sy;
+  const y0 = (pcCv.height - (r.y + r.h)) * sy;
+  return { x0, y0, x1, y1 };
+}
+
+async function pcApply() {
+  if (!pcState.path || !pcState.rect || pcState.busy) return;
+  const cropPt = pcRectToPoints();
+  if (!cropPt) return;
+  pcState.busy = true; pcSetActions(false);
+  $('pcStatus').textContent = 'cropping…';
+  try {
+    const res = await window.api.pdfCrop({ inputPath: pcState.path, cropPt });
+    pcState.lastOut = res.outputPath;
+    $('pcResult').classList.remove('hidden');
+    $('pcResultName').textContent = baseName(res.outputPath) + ' — ' + fmtBytes(res.outSize || 0);
+    $('pcStatus').textContent = 'done';
+    toast('PDF cropped');
+  } catch (err) {
+    $('pcStatus').textContent = (err && err.message) || 'Crop failed.';
+    toast((err && err.message) || 'Crop failed.');
+  } finally {
+    pcState.busy = false; pcSetActions(true);
+  }
+}
+
+// ============================================================================
+// Organize PDF — pick a PDF, show a thumbnail grid; each page can be reordered
+// (◂ ▸ buttons), rotated (cycles 0/90/180/270) and removed/restored. Apply →
+// pdf:organize with the final order + per-output-position rotations.
+// ============================================================================
+const poState = { wired: false, path: '', pages: [], busy: false, lastOut: '' };
+
+function openPdfOrganize() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  state.currentTool = { id: 'organize-pdf', label: 'Organize PDF' }; updateFavBtn();
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Organize PDF';
+  setHero('Organize PDF', 'Reorder, rotate and remove pages, then save a new PDF');
+  $('pdfOrganizePanel').classList.remove('hidden');
+  if (!poState.wired) { wirePdfOrganize(); poState.wired = true; }
+  poUpdateAvail();
+  poReset();
+}
+
+function poUpdateAvail() {
+  const ok = !state.caps || state.caps.hasQpdf;
+  const note = $('poNotice');
+  if (note) note.classList.toggle('hidden', !!ok);
+  $('poLoad').disabled = !ok;
+  if (!ok) $('poApply').disabled = true;
+}
+
+function wirePdfOrganize() {
+  $('poLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
+    const pdf = paths.find((p) => /\.pdf$/i.test(p)) || paths[0];
+    poLoadPdf(pdf);
+  });
+  $('poApply').addEventListener('click', poApply);
+  $('poDelete').addEventListener('click', async () => {
+    if (poState.lastOut) { await window.api.deleteFile(poState.lastOut); poState.lastOut = ''; }
+    $('poResult').classList.add('hidden'); $('poStatus').textContent = 'result discarded';
+  });
+  $('poFolder').addEventListener('click', () => { if (poState.lastOut) window.api.showItem(poState.lastOut); });
+  // delegated controls on the grid
+  $('poGrid').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act]'); if (!btn) return;
+    const card = btn.closest('[data-idx]'); if (!card) return;
+    const idx = Number(card.dataset.idx);
+    const act = btn.dataset.act;
+    if (act === 'left' && idx > 0) { const a = poState.pages; [a[idx - 1], a[idx]] = [a[idx], a[idx - 1]]; }
+    else if (act === 'right' && idx < poState.pages.length - 1) { const a = poState.pages; [a[idx + 1], a[idx]] = [a[idx], a[idx + 1]]; }
+    else if (act === 'rot') { poState.pages[idx].rot = (poState.pages[idx].rot + 90) % 360; }
+    else if (act === 'del') { poState.pages[idx].removed = !poState.pages[idx].removed; }
+    poRenderGrid();
+  });
+}
+
+function poReset() {
+  poState.path = ''; poState.pages = []; poState.lastOut = '';
+  $('poName').textContent = '';
+  $('poHint').classList.remove('hidden');
+  $('poResult').classList.add('hidden');
+  $('poStatus').textContent = 'idle';
+  $('poGrid').innerHTML = '';
+  $('poApply').disabled = true;
+}
+
+async function poLoadPdf(pdfPath) {
+  poReset();
+  poState.path = pdfPath;
+  $('poName').textContent = baseName(pdfPath);
+  $('poStatus').textContent = 'rendering thumbnails…';
+  try {
+    const res = await window.api.pdfThumbs(pdfPath);
+    if (!res || !res.pages || !res.pages.length) throw new Error('No pages found.');
+    // orig is the 1-based original page number; rot is current rotation; removed flag.
+    poState.pages = res.pages.map((p, i) => ({ orig: i + 1, thumb: p.thumb, rot: 0, removed: false }));
+    $('poHint').classList.add('hidden');
+    poRenderGrid();
+    $('poStatus').textContent = `${res.count} page(s) loaded`;
+  } catch (err) {
+    $('poStatus').textContent = (err && err.message) || 'Failed to render thumbnails.';
+  }
+}
+
+function poRenderGrid() {
+  const grid = $('poGrid');
+  const kept = poState.pages.filter((p) => !p.removed).length;
+  grid.innerHTML = poState.pages.map((p, i) => `
+    <div class="po-card${p.removed ? ' removed' : ''}" data-idx="${i}">
+      <div class="po-thumb"><img src="${p.thumb}" alt="page ${p.orig}" style="transform:rotate(${p.rot}deg)"></div>
+      <div class="po-meta"><span class="po-num">p.${p.orig}</span>${p.rot ? `<span class="po-rot">${p.rot}°</span>` : ''}</div>
+      <div class="po-tools">
+        <button class="po-ic" data-act="left" title="move left" ${i === 0 ? 'disabled' : ''}>${icon('arrowLeft') || '‹'}</button>
+        <button class="po-ic" data-act="rot" title="rotate 90°">${icon('refresh') || '⟳'}</button>
+        <button class="po-ic" data-act="del" title="${p.removed ? 'restore page' : 'remove page'}">${p.removed ? '↺' : (icon('trash') || '✕')}</button>
+        <button class="po-ic" data-act="right" title="move right" ${i === poState.pages.length - 1 ? 'disabled' : ''}>${icon('arrowRight') || '›'}</button>
+      </div>
+    </div>`).join('');
+  enhanceSelects(grid);
+  $('poStatus').textContent = `${kept} of ${poState.pages.length} page(s) kept`;
+  $('poApply').disabled = poState.busy || kept < 1;
+}
+
+async function poApply() {
+  if (!poState.path || poState.busy) return;
+  const kept = poState.pages.filter((p) => !p.removed);
+  if (!kept.length) { toast('Keep at least one page.'); return; }
+  const order = kept.map((p) => p.orig);
+  const rotations = {};
+  kept.forEach((p, i) => { if (p.rot) rotations[i + 1] = p.rot; });
+  poState.busy = true; $('poApply').disabled = true;
+  $('poStatus').textContent = 'saving…';
+  try {
+    const res = await window.api.pdfOrganize({ inputPath: poState.path, order, rotations });
+    poState.lastOut = res.outputPath;
+    $('poResult').classList.remove('hidden');
+    $('poResultName').textContent = baseName(res.outputPath) + ' — ' + fmtBytes(res.outSize || 0);
+    $('poStatus').textContent = 'done';
+    toast('PDF organized');
+  } catch (err) {
+    $('poStatus').textContent = (err && err.message) || 'Organize failed.';
+    toast((err && err.message) || 'Organize failed.');
+  } finally {
+    poState.busy = false; $('poApply').disabled = false;
+  }
+}
+
+// ============================================================================
+// Watermark Remover — client-side brush/drag canvas editor.
+// Modeled on the Privacy Blur editor (same region/brush/undo machinery), but
+// image-based with a content-aware "patch / remove" inpaint effect so there is
+// no ffmpeg involvement (the old `delogo` op crashed). Effects: patch (remove),
+// blur, pixelate, black box. Live two-pane preview, undo/redo, export PNG.
+// ============================================================================
+const wmState = {
+  wired: false,
+  source: null, name: '',
+  effect: 'patch',       // patch | blur | pixelate | blackbox
+  selMode: 'rect',       // rect | brush
+  radius: 18,
+  actions: [], redo: [],
+  dragging: false, dragStart: null, dragCur: null,
+  painting: false, stroke: null,
+  lastSaved: null,
+};
+let wmSrcCv = null, wmSrcCtx = null;
+let wmOutCv = null, wmOutCtx = null;
+let wmBaseCv = null, wmBaseCtx = null;
+let wmScale = 1;
+
+const WM_EFFECTS = [
+  ['patch', 'Patch / Remove'],
+  ['blur', 'Blur'],
+  ['pixelate', 'Pixelate'],
+  ['blackbox', 'Black Box'],
+];
+
+function openWatermark() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  state.currentTool = { id: 'watermark-remover', label: 'Watermark Remover' }; updateFavBtn();
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Watermark Remover';
+  setHero('Watermark Remover', 'Brush or box over a watermark — patch it out, blur, pixelate or black-box, live in-app');
+  $('watermarkPanel').classList.remove('hidden');
+  if (!wmState.wired) { wireWatermark(); wmState.wired = true; }
+  wmSyncControls();
+  wmRender();
+}
+
+function wireWatermark() {
+  wmSrcCv = $('wmSrc'); wmSrcCtx = wmSrcCv.getContext('2d', { willReadFrequently: true });
+  wmOutCv = $('wmOut'); wmOutCtx = wmOutCv.getContext('2d', { willReadFrequently: true });
+  wmBaseCv = document.createElement('canvas'); wmBaseCtx = wmBaseCv.getContext('2d', { willReadFrequently: true });
+
+  enhanceSelects($('watermarkPanel'));
+
+  $('wmLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
+    wmLoadImagePath(paths[0]);
+  });
+
+  $('wmEffect').addEventListener('change', (e) => { wmState.effect = e.target.value; wmRenderDebounced(); });
+  $('wmRadius').addEventListener('input', (e) => {
+    wmState.radius = parseInt(e.target.value, 10);
+    $('wmRadiusVal').textContent = wmState.radius;
+    wmDrawSource();
+    wmRenderDebounced();
+  });
+  $('wmRadius').addEventListener('change', wmRenderFlush);
+
+  $('wmSelMode').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-val]'); if (!btn) return;
+    wmState.selMode = btn.dataset.val;
+    wmSyncControls(); wmDrawSource();
+  });
+
+  $('wmUndo').addEventListener('click', wmUndo);
+  $('wmRedo').addEventListener('click', wmRedo);
+  $('wmClear').addEventListener('click', () => {
+    if (!wmState.actions.length) return;
+    wmState.actions = []; wmState.redo = [];
+    wmUpdateButtons(); wmDrawSource(); wmRender();
+  });
+
+  $('wmExport').addEventListener('click', wmExport);
+  $('wmDelete').addEventListener('click', wmDeleteResult);
+  $('wmFolder').addEventListener('click', () => { if (wmState.lastSaved) window.api.showItem(wmState.lastSaved); else window.api.openPath(''); });
+
+  wmSrcCv.addEventListener('mousedown', wmPointerDown);
+  window.addEventListener('mousemove', wmPointerMove);
+  window.addEventListener('mouseup', wmPointerUp);
+
+  document.addEventListener('keydown', (e) => {
+    if ($('watermarkPanel').classList.contains('hidden')) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    const z = e.key === 'z' || e.key === 'Z';
+    const y = e.key === 'y' || e.key === 'Y';
+    if ((e.ctrlKey || e.metaKey) && z && !e.shiftKey) { e.preventDefault(); wmUndo(); }
+    else if ((e.ctrlKey || e.metaKey) && (y || (z && e.shiftKey))) { e.preventDefault(); wmRedo(); }
+  });
+}
+
+function wmSyncControls() {
+  const eff = $('wmEffect');
+  if (eff && !eff.options.length) eff.innerHTML = WM_EFFECTS.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+  if (eff) { eff.value = wmState.effect; if (eff._csRender) eff._csRender(); }
+  const r = $('wmRadius'); if (r) { r.value = wmState.radius; $('wmRadiusVal').textContent = wmState.radius; }
+  pbSeg('wmSelMode', wmState.selMode);
+  wmUpdateButtons();
+}
+function wmUpdateButtons() {
+  $('wmUndo').disabled = !wmState.actions.length;
+  $('wmRedo').disabled = !wmState.redo.length;
+  $('wmClear').disabled = !wmState.actions.length;
+  $('wmExport').disabled = !wmState.source;
+}
+
+function wmLoadImagePath(path) {
+  const img = new Image();
+  img.onload = () => {
+    wmState.source = img; wmState.name = baseName(path);
+    wmState.actions = []; wmState.redo = []; wmState.lastSaved = null;
+    wmBaseCv.width = img.naturalWidth; wmBaseCv.height = img.naturalHeight;
+    wmBaseCtx.drawImage(img, 0, 0);
+    $('wmName').textContent = wmState.name;
+    $('wmHint').classList.add('hidden');
+    $('wmResult').classList.add('hidden');
+    wmUpdateButtons();
+    wmRender();
+  };
+  img.src = 'file:///' + String(path).replace(/\\/g, '/');
+}
+
+function wmFit() {
+  const src = wmState.source; if (!src) return { w: 0, h: 0 };
+  const iw = src.naturalWidth, ih = src.naturalHeight;
+  const MAX = 460;
+  let w = iw, h = ih;
+  if (w > MAX || h > MAX) { const s = MAX / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+  wmScale = iw / w;
+  return { w, h };
+}
+
+function wmDrawSource() {
+  if (!wmState.source) return;
+  const { w, h } = wmFit();
+  wmSrcCv.width = w; wmSrcCv.height = h;
+  wmSrcCtx.drawImage(wmState.source, 0, 0, w, h);
+  wmSrcCtx.save();
+  wmSrcCtx.strokeStyle = '#0071bb'; wmSrcCtx.lineWidth = 1;
+  wmSrcCtx.fillStyle = 'rgba(0,113,187,0.18)';
+  for (const a of wmState.actions) wmOverlayAction(wmSrcCtx, a);
+  if (wmState.dragging && wmState.dragStart && wmState.dragCur) {
+    const r = pbRectFrom(wmState.dragStart, wmState.dragCur);
+    wmSrcCtx.fillRect(r.x / wmScale, r.y / wmScale, r.w / wmScale, r.h / wmScale);
+    wmSrcCtx.strokeRect(r.x / wmScale, r.y / wmScale, r.w / wmScale, r.h / wmScale);
+  }
+  if (wmState.painting && wmState.stroke) wmOverlayAction(wmSrcCtx, wmState.stroke);
+  wmSrcCtx.restore();
+}
+function wmOverlayAction(ctx, a) {
+  if (a.kind === 'rect') {
+    ctx.fillRect(a.x / wmScale, a.y / wmScale, a.w / wmScale, a.h / wmScale);
+    ctx.strokeRect(a.x / wmScale, a.y / wmScale, a.w / wmScale, a.h / wmScale);
+  } else if (a.kind === 'brush') {
+    ctx.beginPath();
+    for (const p of a.points) ctx.moveTo(p.x / wmScale + p.r / wmScale, p.y / wmScale), ctx.arc(p.x / wmScale, p.y / wmScale, p.r / wmScale, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function wmEvtPos(e) {
+  const rect = wmSrcCv.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (wmSrcCv.width / rect.width);
+  const y = (e.clientY - rect.top) * (wmSrcCv.height / rect.height);
+  return { x: x * wmScale, y: y * wmScale };
+}
+function wmPointerDown(e) {
+  if (!wmState.source) return;
+  e.preventDefault();
+  const p = wmEvtPos(e);
+  if (wmState.selMode === 'rect') {
+    wmState.dragging = true; wmState.dragStart = p; wmState.dragCur = p;
+  } else {
+    wmState.painting = true;
+    const r = wmState.radius * wmScale;
+    wmState.stroke = { kind: 'brush', effect: wmState.effect, radius: wmState.radius, points: [{ x: p.x, y: p.y, r }] };
+    wmDrawSource();
+  }
+}
+function wmPointerMove(e) {
+  if (wmState.dragging) { wmState.dragCur = wmEvtPos(e); wmDrawSource(); }
+  else if (wmState.painting && wmState.stroke) {
+    const p = wmEvtPos(e); const r = wmState.radius * wmScale;
+    wmState.stroke.points.push({ x: p.x, y: p.y, r });
+    wmDrawSource(); wmRenderDebounced();
+  }
+}
+function wmPointerUp() {
+  if (wmState.dragging) {
+    wmState.dragging = false;
+    const r = pbRectFrom(wmState.dragStart, wmState.dragCur);
+    wmState.dragStart = wmState.dragCur = null;
+    if (r.w > 3 && r.h > 3) wmPush({ kind: 'rect', effect: wmState.effect, radius: wmState.radius, x: r.x, y: r.y, w: r.w, h: r.h });
+    else wmDrawSource();
+  } else if (wmState.painting) {
+    wmState.painting = false;
+    const stroke = wmState.stroke; wmState.stroke = null;
+    if (stroke && stroke.points.length) wmPush(stroke);
+    else wmDrawSource();
+  }
+}
+
+function wmPush(action) { wmState.actions.push(action); wmState.redo = []; wmUpdateButtons(); wmDrawSource(); wmRender(); }
+function wmUndo() { if (!wmState.actions.length) return; wmState.redo.push(wmState.actions.pop()); wmUpdateButtons(); wmDrawSource(); wmRender(); }
+function wmRedo() { if (!wmState.redo.length) return; wmState.actions.push(wmState.redo.pop()); wmUpdateButtons(); wmDrawSource(); wmRender(); }
+
+let wmRenderTimer = null;
+function wmRenderDebounced() { if (wmRenderTimer) clearTimeout(wmRenderTimer); wmRenderTimer = setTimeout(() => { wmRenderTimer = null; wmRender(); }, 200); }
+function wmRenderFlush() { if (wmRenderTimer) { clearTimeout(wmRenderTimer); wmRenderTimer = null; } wmRender(); }
+
+// Build the full-resolution result canvas from the base image + all actions.
+function wmComposite() {
+  const src = wmState.source; if (!src) return null;
+  const W = src.naturalWidth, H = src.naturalHeight;
+  const out = document.createElement('canvas'); out.width = W; out.height = H;
+  const octx = out.getContext('2d', { willReadFrequently: true });
+  octx.drawImage(wmBaseCv, 0, 0);
+
+  for (const a of wmState.actions) {
+    if (a.kind === 'rect') {
+      const x = Math.max(0, Math.round(a.x)), y = Math.max(0, Math.round(a.y));
+      const w = Math.min(W - x, Math.round(a.w)), h = Math.min(H - y, Math.round(a.h));
+      if (w <= 0 || h <= 0) continue;
+      wmApplyEffectRegion(octx, x, y, w, h, a.effect, a.radius, null);
+    } else if (a.kind === 'brush') {
+      let minX = W, minY = H, maxX = 0, maxY = 0;
+      for (const p of a.points) {
+        minX = Math.min(minX, p.x - p.r); minY = Math.min(minY, p.y - p.r);
+        maxX = Math.max(maxX, p.x + p.r); maxY = Math.max(maxY, p.y + p.r);
+      }
+      const x = Math.max(0, Math.floor(minX)), y = Math.max(0, Math.floor(minY));
+      const w = Math.min(W - x, Math.ceil(maxX - x)), h = Math.min(H - y, Math.ceil(maxY - y));
+      if (w <= 0 || h <= 0) continue;
+      const mask = document.createElement('canvas'); mask.width = w; mask.height = h;
+      const mctx = mask.getContext('2d');
+      mctx.fillStyle = '#fff';
+      for (const p of a.points) { mctx.beginPath(); mctx.arc(p.x - x, p.y - y, p.r, 0, Math.PI * 2); mctx.fill(); }
+      wmApplyEffectRegion(octx, x, y, w, h, a.effect, a.radius, mask);
+    }
+  }
+  return out;
+}
+
+// Apply one effect to a sub-rectangle of octx, optionally masked to white pixels
+// of `mask`. Reuses the Privacy Blur blur/pixelate primitives; adds `patch`.
+function wmApplyEffectRegion(octx, x, y, w, h, effect, radius, mask) {
+  if (effect === 'patch') { wmPatchRegion(octx, x, y, w, h, mask); return; }
+
+  const region = document.createElement('canvas'); region.width = w; region.height = h;
+  const rctx = region.getContext('2d', { willReadFrequently: true });
+  rctx.drawImage(octx.canvas, x, y, w, h, 0, 0, w, h);
+
+  if (effect === 'blur') pbBoxBlur(rctx, w, h, Math.max(1, radius));
+  else if (effect === 'pixelate') pbPixelate(rctx, w, h, Math.max(2, radius));
+  else if (effect === 'blackbox') { rctx.fillStyle = '#000'; rctx.fillRect(0, 0, w, h); }
+
+  if (mask) {
+    rctx.globalCompositeOperation = 'destination-in';
+    rctx.drawImage(mask, 0, 0);
+    rctx.globalCompositeOperation = 'source-over';
+  }
+  octx.drawImage(region, x, y);
+}
+
+// Content-aware patch / inpaint of the selected pixels. We grab the region PLUS
+// a surrounding margin (so even a fully-selected rectangle has known context to
+// sample from), fill the selected pixels by nearest-known interpolation, smooth
+// the fill, then paint just the originally-selected pixels back into octx.
+function wmPatchRegion(octx, x, y, w, h, mask) {
+  const W = octx.canvas.width, H = octx.canvas.height;
+  const m = Math.max(6, Math.round(Math.max(w, h) * 0.25)); // context margin
+  const ex = Math.max(0, x - m), ey = Math.max(0, y - m);
+  const ew = Math.min(W - ex, w + (x - ex) + m), eh = Math.min(H - ey, h + (y - ey) + m);
+
+  const region = document.createElement('canvas'); region.width = ew; region.height = eh;
+  const rctx = region.getContext('2d', { willReadFrequently: true });
+  rctx.drawImage(octx.canvas, ex, ey, ew, eh, 0, 0, ew, eh);
+
+  // Build the selection mask in expanded-region-local coordinates.
+  const sel = new Uint8Array(ew * eh);
+  if (mask) {
+    // brush mask is in (x,y,w,h)-local space; offset into the expanded region.
+    const md = mask.getContext('2d').getImageData(0, 0, w, h).data;
+    for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) {
+      if (md[(yy * w + xx) * 4 + 3] > 8) sel[(yy + (y - ey)) * ew + (xx + (x - ex))] = 1;
+    }
+  } else {
+    for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) sel[(yy + (y - ey)) * ew + (xx + (x - ex))] = 1;
+  }
+  wmInpaintRegion(rctx, ew, eh, sel);
+
+  // Paint back only the selected pixels (mask the expanded region to `sel`).
+  const out = document.createElement('canvas'); out.width = ew; out.height = eh;
+  const octx2 = out.getContext('2d', { willReadFrequently: true });
+  octx2.drawImage(region, 0, 0);
+  const selCv = document.createElement('canvas'); selCv.width = ew; selCv.height = eh;
+  const sctx = selCv.getContext('2d', { willReadFrequently: true });
+  const sImg = sctx.createImageData(ew, eh);
+  for (let i = 0; i < ew * eh; i++) { const a = sel[i] ? 255 : 0; sImg.data[i * 4 + 3] = a; }
+  sctx.putImageData(sImg, 0, 0);
+  octx2.globalCompositeOperation = 'destination-in'; octx2.drawImage(selCv, 0, 0);
+  octx2.globalCompositeOperation = 'source-over';
+  octx.drawImage(out, ex, ey);
+}
+
+// Content-aware patch / inpaint: cover the selected pixels by sampling the
+// nearest surrounding (non-selected) pixels, then smoothing. This is a simple
+// "push-pull" fill — for each masked pixel, take the average of the closest
+// known pixels along the four axes, then box-blur the filled region so it
+// blends. Good enough to erase flat-ish watermarks/logos.
+// Fill the `sel` (==1) pixels of the rctx region by nearest-known interpolation
+// along both axes, then box-blur the filled pixels so the patch blends. Operates
+// in place on rctx; `sel` is a Uint8Array(w*h). Non-selected pixels are kept.
+function wmInpaintRegion(rctx, w, h, sel) {
+  const img = rctx.getImageData(0, 0, w, h);
+  const d = img.data;
+
+  const out = new Float32Array(w * h * 3);
+  const cnt = new Float32Array(w * h);
+  const scanLine = (idxOf, len, stride) => {
+    for (let line = 0; line < len; line++) {
+      let lastKnown = -1;
+      for (let i = 0; i < stride; i++) {
+        const p = idxOf(line, i);
+        if (!sel[p]) lastKnown = p;
+        else if (lastKnown >= 0) addSample(out, cnt, p, d, lastKnown);
+      }
+      lastKnown = -1;
+      for (let i = stride - 1; i >= 0; i--) {
+        const p = idxOf(line, i);
+        if (!sel[p]) lastKnown = p;
+        else if (lastKnown >= 0) addSample(out, cnt, p, d, lastKnown);
+      }
+    }
+  };
+  scanLine((row, i) => row * w + i, h, w);   // rows
+  scanLine((col, i) => i * w + col, w, h);   // cols
+
+  for (let p = 0; p < w * h; p++) {
+    if (!sel[p]) continue;
+    const c = cnt[p]; const o = p * 4;
+    if (c > 0) { d[o] = out[p * 3] / c; d[o + 1] = out[p * 3 + 1] / c; d[o + 2] = out[p * 3 + 2] / c; d[o + 3] = 255; }
+  }
+  rctx.putImageData(img, 0, 0);
+
+  // Smooth only the filled area so the patch blends with its surroundings.
+  const blurred = document.createElement('canvas'); blurred.width = w; blurred.height = h;
+  const bctx = blurred.getContext('2d', { willReadFrequently: true });
+  bctx.drawImage(rctx.canvas, 0, 0);
+  pbBoxBlur(bctx, w, h, 3);
+  const bd = bctx.getImageData(0, 0, w, h).data;
+  for (let p = 0; p < w * h; p++) {
+    if (!sel[p]) continue;
+    const o = p * 4;
+    d[o] = bd[o]; d[o + 1] = bd[o + 1]; d[o + 2] = bd[o + 2]; d[o + 3] = 255;
+  }
+  rctx.putImageData(img, 0, 0);
+}
+function addSample(out, cnt, p, d, src) {
+  const so = src * 4;
+  out[p * 3] += d[so]; out[p * 3 + 1] += d[so + 1]; out[p * 3 + 2] += d[so + 2];
+  cnt[p] += 1;
+}
+
+function wmRender() {
+  if (!wmState.source) {
+    if (wmSrcCv) { wmSrcCv.width = wmSrcCv.height = 0; }
+    if (wmOutCv) { wmOutCv.width = wmOutCv.height = 0; }
+    return;
+  }
+  wmDrawSource();
+  const full = wmComposite();
+  const { w, h } = wmFit();
+  wmOutCv.width = w; wmOutCv.height = h;
+  wmOutCtx.imageSmoothingEnabled = true;
+  wmOutCtx.drawImage(full, 0, 0, w, h);
+  wmState._full = full;
+  $('wmStatus').textContent = `${full.width}×${full.height} · ${wmState.actions.length} area(s)`;
+}
+
+function wmExport() {
+  if (!wmState.source) return;
+  const full = wmComposite(); if (!full) return;
+  const fname = 'MTB_' + (wmState.name || 'image').replace(/\.[^.]+$/, '') + '_nowm.png';
+  const a = document.createElement('a');
+  a.href = full.toDataURL('image/png'); a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  wmState.lastSaved = null;
+  $('wmResult').classList.remove('hidden');
+  $('wmResultName').textContent = fname + ' — saved to Downloads';
+  toast('Watermark Remover saved');
+}
+function wmDeleteResult() {
+  $('wmResult').classList.add('hidden');
+  $('wmResultName').textContent = '';
+}
+
 // ---------- tool options bar (for op tools) ----------
 function renderToolOptions() {
   const bar = $('toolOptions');
@@ -1778,7 +2483,6 @@ function renderToolOptions() {
   else if (op === 'motionblur') html = field('Intensity', `<select data-k="mblur"><option value="2" ${b.mblur == 2 ? 'selected' : ''}>Subtle (2)</option><option value="4" ${b.mblur == 4 ? 'selected' : ''}>Medium (4)</option><option value="8" ${b.mblur == 8 ? 'selected' : ''}>Strong (8)</option><option value="16" ${b.mblur == 16 ? 'selected' : ''}>Max (16)</option></select>`);
   else if (op === 'thumb') html = field('Timestamp (s or hh:mm:ss)', `<input type="text" data-k="time" value="${b.time || '00:00:01'}" placeholder="00:00:01">`);
   else if (op === 'blur') html = regionFields(b, true) + regionPreviewHtml();
-  else if (op === 'delogo') html = regionFields(b, false) + regionPreviewHtml();
   else { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
   const note = op === 'crop' ? '<div class="hint" style="margin-top:10px">Common sizes — TikTok/Reels 1080×1920 · YouTube 1920×1080 · Square 1080×1080 · Story 1080×1920</div>' : '';
   bar.innerHTML = `<div class="to-title">Options</div><div class="to-fields">${html}</div>${note}`;
@@ -1787,7 +2491,7 @@ function renderToolOptions() {
     const k = el.dataset.k; b[k] = el.type === 'number' ? Number(el.value) : el.value;
     for (const e of ws.list.values()) e.settings[k] = b[k];
   }));
-  if (op === 'blur' || op === 'delogo') wireRegionUI(bar, ws, b);
+  if (op === 'blur') wireRegionUI(bar, ws, b);
   bar.classList.remove('hidden');
 }
 
@@ -2989,32 +3693,28 @@ const SETTINGS_CATS = [
   ['updates', 'updates', 'download'],
   ['advanced', 'advanced', 'convert'],
 ];
-// ---------- planned / future updates list (persisted) ----------
-// Persisted in localStorage as an array of {text,done}; mirrors favorites/recents.
-const PLANNED_KEY = 'mtb_planned';
-function loadPlanned() { try { return JSON.parse(localStorage.getItem(PLANNED_KEY)) || []; } catch { return []; } }
-function savePlanned(arr) { try { localStorage.setItem(PLANNED_KEY, JSON.stringify((arr || []).slice(0, 200))); } catch { /* */ } }
-function addPlanned(text) {
-  const t = String(text || '').trim();
-  if (!t) return loadPlanned();
-  const arr = loadPlanned();
-  arr.push({ text: t, done: false });
-  savePlanned(arr);
-  return arr;
-}
-function removePlanned(i) { const arr = loadPlanned(); arr.splice(i, 1); savePlanned(arr); return arr; }
-function togglePlanned(i) { const arr = loadPlanned(); if (arr[i]) arr[i].done = !arr[i].done; savePlanned(arr); return arr; }
-function plannedListHtml(arr) {
-  if (!arr.length) return '<div class="set-note">no planned updates yet — add one below.</div>';
-  return arr.map((it, i) => `<div class="planned-row ${it.done ? 'done' : ''}" data-i="${i}">
-    <label class="planned-check"><input type="checkbox" data-role="done" ${it.done ? 'checked' : ''} /><span></span></label>
-    <span class="planned-text">${mtbEsc(it.text)}</span>
-    <button class="planned-x" data-role="remove" title="remove" aria-label="remove">${icon('x')}</button>
-  </div>`).join('');
-}
-function renderPlannedList() {
-  const host = $('plannedList');
-  if (host) host.innerHTML = plannedListHtml(loadPlanned());
+// ---------- changelog / roadmap (static, embedded in source) ----------
+// These are hardcoded in the app (not user-editable) since it's distributed —
+// maintain them here when shipping features. "recently added" is the user-facing
+// changelog of big features; "coming soon" is the short planned roadmap.
+const CHANGELOG_RECENT = [
+  'Local AI tools — Background Removal, Image Upscaler, Subtitle / Transcript Extractor, and Text to Speech, all running fully on-device',
+  'Text to Speech — Piper voices with adjustable speed; export WAV or MP3, offline',
+  'Spotify Downloader — match & download tracks with embedded tags and cover art',
+  'Video Downloader — grab video/audio from the web with quality & format options',
+  'Photo Effects — filters, adjustments and looks with live preview',
+  'Privacy Blur & Watermark Remover — mask or scrub regions from images',
+  'PDF tools — Crop PDF, Organize PDF (reorder / rotate / drop pages) and Merge',
+  'Metadata editor — read & edit EXIF / IPTC / XMP and audio/video tags, scrub GPS',
+  'Offline mode — disable all internet features while on-device tools keep working',
+];
+const CHANGELOG_PLANNED = [
+  'More text-to-speech voices and languages',
+  'Document conversion — Office and eBook formats',
+  'Additional local AI tools',
+];
+function changelogListHtml(arr) {
+  return `<ul class="cl-list">${arr.map((t) => `<li class="cl-item">${mtbEsc(t)}</li>`).join('')}</ul>`;
 }
 // ---------- reusable component builders (HTML-string helpers) ----------
 function seg(name, cur, opts, wrap) {
@@ -3206,13 +3906,12 @@ function settingsHtml(cat, s) {
     ${hasCheck
       ? actionRow([['setCheckUpdate', 'check for updates', 'download']]) + '<p class="set-note">checks GitHub for a newer release. you\'ll be notified in-app if one is available.</p>'
       : '<p class="set-note">you\'re running the latest bundled version.</p>'}
-    <h3 class="set-h">planned / future updates</h3>
-    <p class="set-note">jot down features and improvements you want to build. saved on this device.</p>
-    <div class="planned-add">
-      <input type="text" id="plannedInput" class="planned-input" placeholder="add a planned update…" maxlength="200" />
-      <button class="act-btn" id="plannedAdd"><span class="ic">${icon('plus')}</span>add</button>
-    </div>
-    <div class="planned-list" id="plannedList">${plannedListHtml(loadPlanned())}</div>`;
+    <h3 class="set-h">recently added</h3>
+    <p class="set-note">the big features that have landed in media toolbox.</p>
+    ${changelogListHtml(CHANGELOG_RECENT)}
+    <h3 class="set-h">coming soon</h3>
+    <p class="set-note">on the roadmap for upcoming releases.</p>
+    ${changelogListHtml(CHANGELOG_PLANNED)}`;
   }
 
   if (cat === 'advanced') return `
@@ -3307,29 +4006,6 @@ function wireSettingsCat(cat, s) {
       chk.disabled = true;
       try { await checkForUpdate(); toast('Checked for updates'); }
       finally { chk.disabled = false; }
-    });
-    const input = $('plannedInput');
-    const addBtn = $('plannedAdd');
-    const commitAdd = () => {
-      if (!input) return;
-      if (!input.value.trim()) return;
-      addPlanned(input.value);
-      input.value = '';
-      renderPlannedList();
-      input.focus();
-    };
-    if (addBtn) addBtn.addEventListener('click', commitAdd);
-    if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitAdd(); } });
-    const list = $('plannedList');
-    if (list) list.addEventListener('click', (e) => {
-      const row = e.target.closest('.planned-row'); if (!row) return;
-      const i = Number(row.dataset.i);
-      if (e.target.closest('[data-role="remove"]')) { removePlanned(i); renderPlannedList(); }
-    });
-    if (list) list.addEventListener('change', (e) => {
-      if (!e.target.matches('[data-role="done"]')) return;
-      const row = e.target.closest('.planned-row'); if (!row) return;
-      togglePlanned(Number(row.dataset.i)); renderPlannedList();
     });
   } else if (cat === 'advanced') {
     // Manual "offline mode" toggle — app-level only; immediately re-apply the offline UI.
@@ -3747,6 +4423,14 @@ function wireTts() {
   });
   $('ttsText').addEventListener('input', ttsUpdateRun);
   $('ttsVoice').addEventListener('change', ttsUpdateRun);
+  // Speed slider → live "1.2×" label. The actual length-scale mapping happens in
+  // main (length-scale = 1/speed; higher slider = faster speech).
+  const ttsSpeed = $('ttsSpeed');
+  if (ttsSpeed) {
+    const paintSpeed = () => { const v = Number(ttsSpeed.value) || 1; const lbl = $('ttsSpeedVal'); if (lbl) lbl.textContent = v.toFixed(1) + '×'; };
+    ttsSpeed.addEventListener('input', paintSpeed);
+    paintSpeed();
+  }
   // The "no voice" notice is a shortcut to the model manager.
   const ttsNotice = $('ttsNoModel');
   if (ttsNotice) { ttsNotice.classList.add('clickable'); ttsNotice.addEventListener('click', () => openSettings('localai')); }
@@ -3756,13 +4440,16 @@ function wireTts() {
     const text = $('ttsText').value.trim(); if (!text) return;
     const voiceId = $('ttsVoice').value; if (!voiceId) return;
     const format = $('ttsFormat').value || 'wav';
+    // Slider is a "speed" multiplier (0.5×–2×, default 1.0); main maps it to
+    // Piper's inverse --length-scale.
+    const speed = Number(($('ttsSpeed') || {}).value) || 1;
     // Re-synthesizing replaces the previous temp + resets the player.
     ttsResetPreview();
     $('ttsRun').disabled = true;
     $('ttsProgress').classList.remove('hidden'); $('ttsBar').classList.add('indet');
     $('ttsStatus').textContent = 'Synthesizing speech…'; $('ttsStatus').className = 'fr-status'; $('ttsStatus').onclick = null;
     try {
-      const res = await window.api.aiTts({ text, voiceId, format });
+      const res = await window.api.aiTts({ text, voiceId, format, speed });
       ttsState.tempPath = res.tempPath; ttsState.format = res.format || format;
       $('ttsBar').classList.remove('indet'); $('ttsBar').style.width = '100%';
       $('ttsStatus').textContent = 'Preview ready — listen, then download'; $('ttsStatus').className = 'fr-status done';
@@ -3875,7 +4562,25 @@ function wireUpscaleAi() {
 // Inference runs in MAIN (the ORT forward pass only); all image I/O — preprocess
 // to a 320x320 NCHW tensor, then composite the returned mask back onto the
 // original at full resolution — happens here on <canvas>. Output is a PNG.
-const rbState = { path: null, img: null, wired: false };
+// rbState now also carries the editable cutout state:
+//   mode      'auto' (U²-Net) | 'manual' (brush-only, no AI)
+//   alphaCv   full-res GREYSCALE alpha mask (white = keep foreground). This is
+//             the single source of truth for compositing; auto fills it from the
+//             AI mask, manual starts it empty, refine brushes edit it.
+//   brush     'add' | 'erase' | 'blur'  (refine brush tool)
+//   radius    brush radius (display px → scaled to image px)
+//   undo/redo stacks of alpha ImageData snapshots (cheap + robust)
+//   refining  whether the editable mask is live (post-auto, or manual)
+const rbState = {
+  path: null, img: null, wired: false,
+  mode: 'auto', brush: 'add', radius: 24,
+  alphaCv: null, alphaCtx: null,
+  undo: [], redo: [],
+  refining: false,
+  dispScale: 1,       // displayed canvas px → image px
+  painting: false, _lastPt: null, _strokeSnapshot: null,
+  lastSaved: null,
+};
 const RB_SIZE = 320;
 const RB_MEAN = [0.485, 0.456, 0.406];
 const RB_STD = [0.229, 0.224, 0.225];
@@ -3884,13 +4589,28 @@ async function openRemoveBg() {
   hideAll(); state.section = 'tools'; state.ws = null;
   state.currentTool = { id: 'remove-bg', label: 'Background Removal' }; updateFavBtn();
   $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Background Removal';
-  setHero('Background Removal', 'AI cutout — remove an image background locally and export a transparent PNG');
+  setHero('Background Removal', 'Remove an image background locally — automatic AI cutout or manual brush, then refine');
   $('removebgPanel').classList.remove('hidden');
   if (!rbState.wired) { wireRemoveBg(); rbState.wired = true; }
   enhanceSelects($('removebgPanel'));
   const engineOk = !state.caps || state.caps.hasBgRemoval !== false;
   $('rbNoEngine').classList.toggle('hidden', engineOk);
+  rbSyncMode();
   await rbRefreshModels();
+}
+// Reflect the auto/manual mode choice in the UI and enable manual editing.
+function rbSyncMode() {
+  pbSeg('rbMode', rbState.mode);
+  pbSeg('rbBrush', rbState.brush);
+  const r = $('rbRadius'); if (r) { r.value = rbState.radius; $('rbRadiusVal').textContent = rbState.radius; }
+  const auto = rbState.mode === 'auto';
+  $('rbModelField').classList.toggle('hidden', !auto);
+  $('rbRun').textContent = '';
+  $('rbRun').innerHTML = (auto ? 'Remove background' : 'Start manual cutout') + ` <span class="ic">${icon('arrowRight')}</span>`;
+  if ($('rbAutoHint')) $('rbAutoHint').textContent = auto
+    ? 'Automatic uses a local AI model. After running, switch to a refine brush below to clean up the edges.'
+    : 'Manual mode uses no AI. Start, then brush the subject by hand with the Add brush; Erase to trim.';
+  rbUpdateRun();
 }
 async function rbRefreshModels() {
   const sel = $('rbModel');
@@ -3920,7 +4640,8 @@ async function rbRefreshModels() {
 function rbUpdateRun() {
   const engineOk = !state.caps || state.caps.hasBgRemoval !== false;
   const hasModel = !!($('rbModel').value);
-  $('rbRun').disabled = !(rbState.path && rbState.img && hasModel && engineOk);
+  if (rbState.mode === 'manual') $('rbRun').disabled = !(rbState.path && rbState.img);
+  else $('rbRun').disabled = !(rbState.path && rbState.img && hasModel && engineOk);
 }
 function rbResolveBg() {
   const choice = $('rbBg').value;
@@ -3971,11 +4692,229 @@ function rbShowDelete(fname) {
     toast('Result cleared');
   };
 }
+// ----- editable alpha-mask helpers -----
+// rbState.alphaCv is a full-resolution greyscale canvas; its RED channel is the
+// foreground alpha (255 = keep). All editing mutates this canvas; compositing
+// reads it. Undo/redo snapshot the canvas as ImageData.
+function rbInitAlpha(fill) {
+  const img = rbState.img; if (!img) return;
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = fill ? '#fff' : '#000';
+  ctx.fillRect(0, 0, W, H);
+  rbState.alphaCv = cv; rbState.alphaCtx = ctx;
+  rbState.undo = []; rbState.redo = [];
+}
+// Replace alpha contents from a (typically 320x320) greyscale mask canvas,
+// scaled up to full resolution with smoothing.
+function rbSetAlphaFrom(maskCv) {
+  const img = rbState.img; if (!img) return;
+  const W = img.naturalWidth, H = img.naturalHeight;
+  if (!rbState.alphaCv) rbInitAlpha(false);
+  const ctx = rbState.alphaCtx;
+  ctx.imageSmoothingEnabled = true;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(maskCv, 0, 0, W, H);
+}
+function rbSnapshot() {
+  if (!rbState.alphaCtx) return;
+  const cv = rbState.alphaCv;
+  rbState.undo.push(rbState.alphaCtx.getImageData(0, 0, cv.width, cv.height));
+  if (rbState.undo.length > 30) rbState.undo.shift();
+  rbState.redo = [];
+  rbUpdateRefineButtons();
+}
+function rbRestore(stack, other) {
+  if (!rbState.alphaCtx || !stack.length) return;
+  const cv = rbState.alphaCv;
+  other.push(rbState.alphaCtx.getImageData(0, 0, cv.width, cv.height));
+  rbState.alphaCtx.putImageData(stack.pop(), 0, 0);
+  rbUpdateRefineButtons();
+  rbRenderComposite();
+}
+function rbUndo() { rbRestore(rbState.undo, rbState.redo); }
+function rbRedo() { rbRestore(rbState.redo, rbState.undo); }
+function rbUpdateRefineButtons() {
+  if ($('rbUndo')) $('rbUndo').disabled = !rbState.undo.length;
+  if ($('rbRedo')) $('rbRedo').disabled = !rbState.redo.length;
+  if ($('rbClear')) $('rbClear').disabled = !(rbState.undo.length || rbState.redo.length);
+}
+
+// Enter the editable/refine state: show the refine panel and draw the composite.
+function rbEnterRefine() {
+  rbState.refining = true;
+  $('rbRefine').classList.remove('hidden');
+  $('rbExport').disabled = false;
+  rbUpdateRefineButtons();
+  rbRenderComposite();
+}
+
+// Build the full-resolution composited result (img masked by alpha, optional bg).
+function rbComposite() {
+  const img = rbState.img; if (!img || !rbState.alphaCv) return null;
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const out = document.createElement('canvas'); out.width = W; out.height = H;
+  const octx = out.getContext('2d', { willReadFrequently: true });
+  octx.drawImage(img, 0, 0, W, H);
+  const od = octx.getImageData(0, 0, W, H);
+  const ad = rbState.alphaCtx.getImageData(0, 0, W, H).data;
+  for (let i = 0, n = W * H; i < n; i++) {
+    od.data[i * 4 + 3] = Math.round(od.data[i * 4 + 3] * (ad[i * 4] / 255));
+  }
+  octx.putImageData(od, 0, 0);
+  const bg = rbResolveBg();
+  if (!bg) return out;
+  const bgCv = document.createElement('canvas'); bgCv.width = W; bgCv.height = H;
+  const bctx = bgCv.getContext('2d');
+  bctx.fillStyle = bg; bctx.fillRect(0, 0, W, H);
+  bctx.drawImage(out, 0, 0);
+  return bgCv;
+}
+
+// Draw the live composite onto the on-screen preview canvas (and record the
+// displayed→image scale for brush coordinate mapping).
+function rbRenderComposite() {
+  const img = rbState.img; if (!img) return;
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const full = rbComposite(); if (!full) return;
+  const cv = $('rbPreview');
+  const scale = Math.min(1, 640 / W, 480 / H);
+  cv.width = Math.max(1, Math.round(W * scale));
+  cv.height = Math.max(1, Math.round(H * scale));
+  rbState.dispScale = W / cv.width; // displayed px → image px
+  const pctx = cv.getContext('2d');
+  pctx.clearRect(0, 0, cv.width, cv.height);
+  rbDrawChecker(pctx, cv.width, cv.height); // checkerboard reads transparency
+  pctx.drawImage(full, 0, 0, cv.width, cv.height);
+  cv.classList.remove('hidden');
+}
+function rbDrawChecker(ctx, w, h) {
+  const s = 10;
+  for (let y = 0; y < h; y += s) for (let x = 0; x < w; x += s) {
+    ctx.fillStyle = ((x / s + y / s) & 1) ? '#d8d8d8' : '#f0f0f0';
+    ctx.fillRect(x, y, s, s);
+  }
+}
+
+// ----- brush painting on the alpha mask -----
+function rbEvtPos(e) {
+  const cv = $('rbPreview');
+  const rect = cv.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (cv.width / rect.width) * rbState.dispScale;
+  const y = (e.clientY - rect.top) * (cv.height / rect.height) * rbState.dispScale;
+  return { x, y };
+}
+// Stamp one brush dab into the alpha mask at image-space (x,y).
+function rbStampAlpha(x, y) {
+  const ctx = rbState.alphaCtx; if (!ctx) return;
+  const r = rbState.radius * rbState.dispScale;
+  if (rbState.brush === 'add' || rbState.brush === 'erase') {
+    const c = rbState.brush === 'add' ? '255,255,255' : '0,0,0';
+    const g = ctx.createRadialGradient(x, y, r * 0.5, x, y, r); // soft edge → natural matte
+    g.addColorStop(0, `rgba(${c},1)`); g.addColorStop(1, `rgba(${c},0)`);
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  } else if (rbState.brush === 'blur') {
+    // Soften the mask edge inside the brush disc: blur a local patch of alpha.
+    const W = rbState.alphaCv.width, H = rbState.alphaCv.height;
+    const rx = Math.max(0, Math.floor(x - r)), ry = Math.max(0, Math.floor(y - r));
+    const rw = Math.min(W - rx, Math.ceil(r * 2)), rh = Math.min(H - ry, Math.ceil(r * 2));
+    if (rw <= 0 || rh <= 0) return;
+    const patch = document.createElement('canvas'); patch.width = rw; patch.height = rh;
+    const pctx = patch.getContext('2d', { willReadFrequently: true });
+    pctx.drawImage(rbState.alphaCv, rx, ry, rw, rh, 0, 0, rw, rh);
+    pbBoxBlur(pctx, rw, rh, Math.max(2, Math.round(r / 3)));
+    const disc = document.createElement('canvas'); disc.width = rw; disc.height = rh;
+    const dctx = disc.getContext('2d');
+    dctx.fillStyle = '#fff'; dctx.beginPath(); dctx.arc(x - rx, y - ry, r, 0, Math.PI * 2); dctx.fill();
+    pctx.globalCompositeOperation = 'destination-in'; pctx.drawImage(disc, 0, 0);
+    pctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(patch, rx, ry);
+  }
+}
+function rbPointerDown(e) {
+  if (!rbState.refining || !rbState.alphaCtx) return;
+  e.preventDefault();
+  rbSnapshot();
+  rbState.painting = true;
+  const p = rbEvtPos(e); rbState._lastPt = p;
+  rbStampAlpha(p.x, p.y);
+  rbRenderComposite();
+}
+function rbPointerMove(e) {
+  if (!rbState.painting) return;
+  const p = rbEvtPos(e); const last = rbState._lastPt || p;
+  // interpolate dabs between points so fast strokes stay continuous
+  const dx = p.x - last.x, dy = p.y - last.y;
+  const dist = Math.hypot(dx, dy);
+  const step = Math.max(2, rbState.radius * rbState.dispScale * 0.4);
+  const steps = Math.max(1, Math.floor(dist / step));
+  for (let i = 1; i <= steps; i++) rbStampAlpha(last.x + (dx * i) / steps, last.y + (dy * i) / steps);
+  rbState._lastPt = p;
+  rbRenderComposite();
+}
+function rbPointerUp() {
+  if (!rbState.painting) return;
+  rbState.painting = false; rbState._lastPt = null;
+}
+
 function wireRemoveBg() {
   $('rbBg').addEventListener('change', () => {
     $('rbColorField').style.display = $('rbBg').value === 'custom' ? '' : 'none';
+    if (rbState.refining) rbRenderComposite();
   });
+  $('rbColor').addEventListener('input', () => { if (rbState.refining) rbRenderComposite(); });
   $('rbModel').addEventListener('change', rbUpdateRun);
+  $('rbMode').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-val]'); if (!btn) return;
+    rbState.mode = btn.dataset.val; rbSyncMode();
+  });
+  $('rbBrush').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-val]'); if (!btn) return;
+    rbState.brush = btn.dataset.val; pbSeg('rbBrush', rbState.brush);
+  });
+  $('rbRadius').addEventListener('input', (e) => {
+    rbState.radius = parseInt(e.target.value, 10); $('rbRadiusVal').textContent = rbState.radius;
+  });
+  $('rbUndo').addEventListener('click', rbUndo);
+  $('rbRedo').addEventListener('click', rbRedo);
+  $('rbClear').addEventListener('click', () => {
+    // reset to the original baseline (auto mask if available, else empty)
+    if (rbState.mode === 'manual') { rbSnapshot(); rbInitAlpha(false); rbState.undo = []; rbState.redo = []; }
+    else if (rbState._autoMaskCv) { rbSnapshot(); rbSetAlphaFrom(rbState._autoMaskCv); }
+    rbUpdateRefineButtons(); rbRenderComposite();
+  });
+  $('rbExport').addEventListener('click', () => {
+    const full = rbComposite(); if (!full) return;
+    const fname = 'MTB_' + baseName(rbState.path).replace(/\.[^.]+$/, '') + '_nobg.png';
+    const a = document.createElement('a');
+    a.href = full.toDataURL('image/png'); a.download = fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    rbState.lastSaved = null;
+    $('rbResult').classList.remove('hidden');
+    $('rbResultName').textContent = fname + ' — saved to Downloads';
+    toast('Background removal saved');
+  });
+  $('rbDelete2').addEventListener('click', () => { $('rbResult').classList.add('hidden'); $('rbResultName').textContent = ''; });
+  $('rbFolder').addEventListener('click', () => { if (rbState.lastSaved) window.api.showItem(rbState.lastSaved); else window.api.openPath(''); });
+
+  // brush interaction on the preview canvas
+  $('rbPreview').addEventListener('mousedown', rbPointerDown);
+  window.addEventListener('mousemove', rbPointerMove);
+  window.addEventListener('mouseup', rbPointerUp);
+  document.addEventListener('keydown', (e) => {
+    if ($('removebgPanel').classList.contains('hidden') || !rbState.refining) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    const z = e.key === 'z' || e.key === 'Z', y = e.key === 'y' || e.key === 'Y';
+    if ((e.ctrlKey || e.metaKey) && z && !e.shiftKey) { e.preventDefault(); rbUndo(); }
+    else if ((e.ctrlKey || e.metaKey) && (y || (z && e.shiftKey))) { e.preventDefault(); rbRedo(); }
+  });
+
   // The "no model" notice is a shortcut to the model manager.
   const rbNotice = $('rbNoModel');
   if (rbNotice) { rbNotice.classList.add('clickable'); rbNotice.addEventListener('click', () => openSettings('localai')); }
@@ -3983,6 +4922,10 @@ function wireRemoveBg() {
     const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
     rbState.path = paths[0]; $('rbName').textContent = baseName(paths[0]);
     $('rbProgress').classList.add('hidden'); $('rbStatus').textContent = ''; $('rbStatus').onclick = null;
+    // reset editing state for the new image
+    rbState.refining = false; rbState.alphaCv = null; rbState.alphaCtx = null;
+    rbState.undo = []; rbState.redo = []; rbState._autoMaskCv = null;
+    $('rbRefine').classList.add('hidden'); $('rbResult').classList.add('hidden');
     const img = new Image();
     img.onload = () => {
       rbState.img = img;
@@ -3992,6 +4935,7 @@ function wireRemoveBg() {
       const scale = Math.min(1, maxW / img.naturalWidth, maxH / img.naturalHeight);
       cv.width = Math.max(1, Math.round(img.naturalWidth * scale));
       cv.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      rbState.dispScale = img.naturalWidth / cv.width;
       const ctx = cv.getContext('2d');
       ctx.clearRect(0, 0, cv.width, cv.height);
       ctx.drawImage(img, 0, 0, cv.width, cv.height);
@@ -4003,16 +4947,28 @@ function wireRemoveBg() {
   });
   $('rbRun').addEventListener('click', async () => {
     if (!rbState.path || !rbState.img) return;
+    const img = rbState.img;
+
+    // MANUAL mode → no AI; start an empty mask and let the user brush.
+    if (rbState.mode === 'manual') {
+      rbInitAlpha(false);
+      rbState._autoMaskCv = null;
+      rbState.brush = 'add'; pbSeg('rbBrush', 'add');
+      rbEnterRefine();
+      $('rbStatus').textContent = 'Manual cutout — paint the subject with the Add brush.';
+      $('rbStatus').className = 'fr-status';
+      toast('Manual cutout ready');
+      rbUpdateRun();
+      return;
+    }
+
+    // AUTOMATIC mode → run the U²-Net model, then make the mask editable.
     const modelId = $('rbModel').value; if (!modelId) return;
-    const bg = rbResolveBg();
     $('rbRun').disabled = true;
     $('rbProgress').classList.remove('hidden'); $('rbBar').classList.add('indet');
     $('rbStatus').textContent = 'Removing background…'; $('rbStatus').className = 'fr-status'; $('rbStatus').onclick = null;
     { const b = $('rbStatus').parentElement && $('rbStatus').parentElement.querySelector('.ai-del'); if (b) b.classList.add('hidden'); }
     try {
-      const img = rbState.img;
-      const W = img.naturalWidth, H = img.naturalHeight;
-
       // 1) Downscale source to 320x320 → ImageData → normalized tensor.
       const small = document.createElement('canvas');
       small.width = RB_SIZE; small.height = RB_SIZE;
@@ -4023,8 +4979,8 @@ function wireRemoveBg() {
       // 2) Run the ORT forward pass in main → 320x320 mask (0..1).
       const { mask } = await window.api.aiRemoveBg({ modelId, data: tensor, size: RB_SIZE });
 
-      // 3) Paint the mask onto a 320x320 canvas (alpha channel), then scale it up
-      //    to the original dimensions for compositing.
+      // 3) Paint the mask onto a 320x320 greyscale canvas (kept as the editable
+      //    "auto mask" baseline so Clear can revert to it).
       const maskCv = document.createElement('canvas');
       maskCv.width = RB_SIZE; maskCv.height = RB_SIZE;
       const mctx = maskCv.getContext('2d');
@@ -4034,55 +4990,18 @@ function wireRemoveBg() {
         mImg.data[i * 4] = a; mImg.data[i * 4 + 1] = a; mImg.data[i * 4 + 2] = a; mImg.data[i * 4 + 3] = 255;
       }
       mctx.putImageData(mImg, 0, 0);
+      rbState._autoMaskCv = maskCv;
 
-      const maskFull = document.createElement('canvas');
-      maskFull.width = W; maskFull.height = H;
-      const mfctx = maskFull.getContext('2d');
-      mfctx.imageSmoothingEnabled = true;
-      mfctx.drawImage(maskCv, 0, 0, W, H);
-      const maskData = mfctx.getImageData(0, 0, W, H).data;
-
-      // 4) Composite: original RGB with alpha = mask value.
-      const outCv = document.createElement('canvas');
-      outCv.width = W; outCv.height = H;
-      const octx = outCv.getContext('2d');
-      octx.drawImage(img, 0, 0, W, H);
-      const od = octx.getImageData(0, 0, W, H);
-      for (let i = 0, n = W * H; i < n; i++) {
-        // mask is grayscale → take the red channel as the alpha multiplier.
-        od.data[i * 4 + 3] = Math.round(od.data[i * 4 + 3] * (maskData[i * 4] / 255));
-      }
-      octx.putImageData(od, 0, 0);
-
-      // 5) If a background color was chosen, paint it BEHIND the cutout.
-      let finalCv = outCv;
-      if (bg) {
-        const bgCv = document.createElement('canvas');
-        bgCv.width = W; bgCv.height = H;
-        const bctx = bgCv.getContext('2d');
-        bctx.fillStyle = bg; bctx.fillRect(0, 0, W, H);
-        bctx.drawImage(outCv, 0, 0);
-        finalCv = bgCv;
-      }
-
-      // 6) Show the result on the preview + export as a PNG.
-      const cv = $('rbPreview');
-      const scale = Math.min(1, 640 / W, 480 / H);
-      cv.width = Math.max(1, Math.round(W * scale));
-      cv.height = Math.max(1, Math.round(H * scale));
-      const pctx = cv.getContext('2d');
-      pctx.clearRect(0, 0, cv.width, cv.height);
-      pctx.drawImage(finalCv, 0, 0, cv.width, cv.height);
-
-      const dataUrl = finalCv.toDataURL('image/png');
-      const fname = 'MTB_' + baseName(rbState.path).replace(/\.[^.]+$/, '') + '_nobg.png';
-      const a = document.createElement('a');
-      a.href = dataUrl; a.download = fname;
-      document.body.appendChild(a); a.click(); a.remove();
+      // 4) Make it the editable full-res alpha layer; show the live composite.
+      rbInitAlpha(false);
+      rbSetAlphaFrom(maskCv);
+      rbState.undo = []; rbState.redo = [];
+      rbState.brush = 'erase'; pbSeg('rbBrush', 'erase');
+      rbEnterRefine();
 
       $('rbBar').classList.remove('indet'); $('rbBar').style.width = '100%';
-      $('rbStatus').textContent = `Saved ${fname} (in Downloads)`; $('rbStatus').className = 'fr-status done';
-      rbShowDelete(fname);
+      $('rbStatus').textContent = 'Background removed — refine the edges with the brushes below.';
+      $('rbStatus').className = 'fr-status done';
       toast('Background removed');
     } catch (e) {
       $('rbBar').classList.remove('indet');
