@@ -27,6 +27,7 @@
         </div>
         <button class="nav-btn" id="homeBtn"><span class="ic" data-icon="home"></span> Home</button>
         <button class="nav-btn" id="recentsBtn"><span class="ic" data-icon="download"></span> Downloads</button>
+        <button class="nav-btn" id="favsBtn" title="Saved tools" aria-label="Saved tools"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.3 4.3 12.6a4.6 4.6 0 0 1 0-6.5 4.6 4.6 0 0 1 6.5 0l1.2 1.2 1.2-1.2a4.6 4.6 0 0 1 6.5 0 4.6 4.6 0 0 1 0 6.5Z"/></svg></span> Saved</button>
         <button class="nav-btn" id="profileBtn"><span class="ic" data-icon="user"></span> About</button>
         <button class="nav-btn" id="settingsBtn"><span class="ic" data-icon="settings"></span> Settings</button>
       </nav>
@@ -35,6 +36,11 @@
     <div id="recentsPanel" class="recents-panel hidden">
       <div class="recents-head"><span>recent files</span><button id="recentsClear" class="recents-clear">clear all</button></div>
       <div id="recentsBody" class="recents-body"></div>
+    </div>
+
+    <div id="favsPanel" class="recents-panel favs-panel hidden">
+      <div class="recents-head"><span>saved tools</span></div>
+      <div id="favsBody" class="recents-body"></div>
     </div>
 
     <header class="hero">
@@ -50,6 +56,7 @@
         <button class="home-card" data-tool="metadata"><span class="home-ic" data-icon="metadata"></span><span class="home-title">Metadata Editor</span><span class="home-desc">edit or scrub file metadata</span></button>
         <button class="home-card" data-tool="downloader"><span class="home-ic" data-icon="download"></span><span class="home-title">Video Downloader</span><span class="home-desc">paste a link · 20+ sites</span></button>
         <button class="home-card" data-tool="photofx"><span class="home-ic" data-icon="image"></span><span class="home-title">Photo Effects</span><span class="home-desc">filters · dither · glitch · ascii</span></button>
+        <button class="home-card" data-tool="ai"><span class="home-ic" data-icon="tools"></span><span class="home-title">AI Tools</span><span class="home-desc">transcribe · upscale · remove bg</span></button>
       </section>
 
       <section id="convertMenu" class="accordion hidden"></section>
@@ -58,6 +65,7 @@
 
       <div id="toolHeader" class="tool-header hidden">
         <button id="backBtn" class="btn ghost"><span class="ic" data-icon="arrowLeft"></span> Back</button>
+        <button id="favBtn" class="fav-btn hidden" type="button" title="Save this tool" aria-pressed="false" aria-label="Save this tool"></button>
         <span id="toolName" class="tool-name"></span>
       </div>
 
@@ -291,6 +299,15 @@
         </div>
       </div>
 
+      <!-- AI Tools hub (home for the local AI tools) -->
+      <div id="aiHubPanel" class="panel hidden">
+        <div class="home-grid ai-hub">
+          <button class="home-card" data-ai="transcribe"><span class="home-ic" data-icon="audio"></span><span class="home-title">Subtitle / Transcript</span><span class="home-desc">local speech-to-text · srt · txt · vtt</span></button>
+          <button class="home-card" data-ai="upscale"><span class="home-ic" data-icon="image"></span><span class="home-title">AI Image Upscaler</span><span class="home-desc">Real-ESRGAN super-resolution</span></button>
+          <button class="home-card" data-ai="removebg"><span class="home-ic" data-icon="image"></span><span class="home-title">Background Removal</span><span class="home-desc">AI cutout · transparent PNG</span></button>
+        </div>
+      </div>
+
       <!-- Subtitle / Transcript Extractor (whisper) -->
       <div id="transcribePanel" class="panel hidden">
         <div class="toolbar">
@@ -384,7 +401,7 @@
               </select>
             </label>
             <label class="field" id="rbColorField" style="display:none"><span>Color</span><input id="rbColor" type="color" value="#0071bb"/></label>
-            <p class="hint">The cutout is computed locally on your machine — nothing is uploaded. Output is a transparent PNG (or filled with the chosen background).</p>
+            <p class="hint">Output is a transparent PNG (or filled with the chosen background).</p>
             <button id="rbRun" class="btn primary big" disabled>Remove background <span class="ic" data-icon="arrowRight"></span></button>
             <div id="rbProgress" class="yt-progress hidden"><div class="bar"><div id="rbBar" class="bar-fill"></div></div><div id="rbStatus" class="fr-status"></div></div>
           </div>

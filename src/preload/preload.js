@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld('api', {
     download: (feature, id) => ipcRenderer.invoke('aimodel:download', { feature, id }),
     remove: (feature, id) => ipcRenderer.invoke('aimodel:remove', { feature, id }),
     onProgress: (cb) => ipcRenderer.on('aimodel:progress', (_e, p) => cb(p)),
+    // Fired after a model finishes downloading or is removed (any window).
+    onAimodelChanged: (cb) => ipcRenderer.on('aimodel:changed', () => cb()),
   },
 
   // First-run AI model setup (installer-chosen models download on first launch)

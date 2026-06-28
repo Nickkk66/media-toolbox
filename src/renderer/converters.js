@@ -150,7 +150,6 @@ const TOOL_CATEGORIES = [
     name: 'Audio Tools', icon: 'audio', items: [
       { id: 'trim-audio', label: 'Trim Audio', engine: 'op', mediaType: 'audioop', op: 'trim', accept: AUDIO, tags: ['trim', 'cut', 'clip', 'audio', 'shorten', 'music'] },
       { id: 'audio-denoise', label: 'Audio Denoise', engine: 'op', mediaType: 'audioop', op: 'denoise', accept: AUDIO, tags: ['denoise', 'noise', 'clean', 'hiss', 'background noise', 'audio', 'reduce'] },
-      { id: 'transcribe', label: 'Subtitle / Transcript Extractor', engine: 'transcribe', accept: VIDEO.concat(AUDIO), tags: ['subtitle', 'subtitles', 'transcribe', 'transcript', 'caption', 'captions', 'speech to text', 'whisper', 'srt', 'text'] },
     ],
   },
   {
@@ -163,8 +162,6 @@ const TOOL_CATEGORIES = [
       { id: 'flip-image', label: 'Flip Image', engine: 'op', mediaType: 'imageop', op: 'flip', accept: IMAGE, tags: ['flip', 'mirror', 'horizontal', 'vertical', 'image'] },
       { id: 'image-enlarger', label: 'Image Enlarger', engine: 'op', mediaType: 'imageop', op: 'enlarge', accept: IMAGE, tags: ['enlarge', 'enlarger', 'bigger', 'scale up', 'upscale', 'photo', 'image'] },
       { id: 'image-upscaler', label: 'Image Upscaler', engine: 'op', mediaType: 'imageop', op: 'upscale', accept: IMAGE, tags: ['upscale', 'upscaler', 'enhance', 'hd', 'super resolution', 'photo', 'pixel art', 'image'] },
-      { id: 'image-upscaler-ai', label: 'AI Image Upscaler', engine: 'upscaleai', accept: IMAGE, tags: ['upscale', 'upscaler', 'enhance', 'super resolution', 'ai', 'photo', 'hd', 'enlarge', 'image'] },
-      { id: 'remove-bg', label: 'Background Removal', engine: 'removebg', accept: IMAGE, tags: ['background', 'remove background', 'remove bg', 'transparent', 'cutout', 'matting', 'knockout', 'png', 'ai', 'image'] },
       { id: 'photo-effects', label: 'Photo Effects', engine: 'photofx', tags: ['effects', 'filter', 'dither', 'ascii', 'halftone', 'glitch', 'retro', 'photo', 'image', 'crt'] },
     ],
   },
@@ -194,6 +191,14 @@ const TOOL_CATEGORIES = [
   },
 ];
 
+// AI Tools — surfaced via the Home "AI Tools" hub (NOT in the Tools accordion).
+// Kept defined here so global search still finds them and the hub can render them.
+const AI_TOOLS = [
+  { id: 'transcribe', label: 'Subtitle / Transcript Extractor', engine: 'transcribe', accept: VIDEO.concat(AUDIO), tags: ['subtitle', 'subtitles', 'transcribe', 'transcript', 'caption', 'captions', 'speech to text', 'whisper', 'srt', 'text', 'ai'] },
+  { id: 'image-upscaler-ai', label: 'AI Image Upscaler', engine: 'upscaleai', accept: IMAGE, tags: ['upscale', 'upscaler', 'enhance', 'super resolution', 'ai', 'photo', 'hd', 'enlarge', 'image'] },
+  { id: 'remove-bg', label: 'Background Removal', engine: 'removebg', accept: IMAGE, tags: ['background', 'remove background', 'remove bg', 'transparent', 'cutout', 'matting', 'knockout', 'png', 'ai', 'image'] },
+];
+
 function findIn(cats, id) {
   for (const cat of cats) { const c = cat.items.find((i) => i.id === id); if (c) return c; }
   return null;
@@ -206,6 +211,12 @@ window.ICONS = ICONS;
 window.CONVERT_CATEGORIES = CONVERT_CATEGORIES;
 window.COMPRESS_CATEGORIES = COMPRESS_CATEGORIES;
 window.TOOL_CATEGORIES = TOOL_CATEGORIES;
+// AI tools live in the Home "AI Tools" hub. Exposed both as a flat list and as a
+// single-category array so the search index (which iterates *_CATEGORIES) can
+// include them without re-shaping its loop.
+window.AI_TOOLS = AI_TOOLS;
+window.AI_CATEGORIES = [{ name: 'AI Tools', icon: 'tools', items: AI_TOOLS }];
 window.findConverter = findConverter;
 window.findCompressor = findCompressor;
 window.findTool = findTool;
+window.findAiTool = (id) => AI_TOOLS.find((i) => i.id === id) || null;

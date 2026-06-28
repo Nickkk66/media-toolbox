@@ -65,10 +65,12 @@ button, input, select { font-family: inherit; font-weight: var(--thin); }
 .navsearch-btn .ic { width: 16px; height: 16px; }
 .navsearch-input {
   width: 0; opacity: 0; padding: 0; border: 1px solid var(--steel); border-left: none;
-  background: transparent; color: var(--ink); font-size: 13px; font-weight: var(--thin);
+  /* TASK 4: neutral grey fill (was transparent → read as black on the dark canvas). */
+  background: #ededed; color: var(--ink); font-size: 13px; font-weight: var(--thin);
   height: 30px; transition: width .18s ease, opacity .18s ease, padding .18s ease;
   pointer-events: none;
 }
+body[data-theme="dark"] .navsearch-input { background: #2b2b31; }
 .navsearch:hover .navsearch-input,
 .navsearch.open .navsearch-input {
   width: 200px; opacity: 1; padding: 0 10px; pointer-events: auto;
@@ -106,6 +108,34 @@ button, input, select { font-family: inherit; font-weight: var(--thin); }
 .recent-name { font-size: 13px; }
 .recent-loc { font-size: 11px; color: var(--graphite); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .recent-empty { padding: 18px 12px; font-size: 13px; color: var(--graphite); text-align: center; }
+
+/* Favorites — heart toggle in the tool header */
+.fav-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; flex: none; padding: 0;
+  background: none; border: 1px solid var(--steel); color: var(--graphite); cursor: pointer;
+}
+.fav-btn:hover { border-color: var(--ink); color: var(--ink); }
+.fav-btn.on { color: var(--link); border-color: var(--link); }
+.fav-btn svg { width: 18px; height: 18px; display: block; }
+
+/* Saved-tools popover (modeled on .recents-panel) */
+.favs-panel { width: 300px; }
+.fav-row { flex-direction: row; align-items: center; gap: 8px; padding: 0; }
+.fav-row .recent-open {
+  flex: 1; display: flex; align-items: center; min-width: 0;
+  background: none; border: none; text-align: left; cursor: pointer;
+  color: var(--ink); padding: 10px 12px;
+}
+.fav-row .recent-open:hover { color: var(--link); }
+.fav-row .recent-open .recent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav-remove {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; align-self: stretch; background: none; border: none; cursor: pointer;
+  color: var(--link); padding: 0 10px;
+}
+.fav-remove:hover { color: var(--ink); }
+.fav-remove .ic, .fav-remove svg { width: 16px; height: 16px; display: block; }
 
 /* Hero */
 .hero { max-width: var(--maxw); margin: 0 auto; padding: var(--s66) var(--s33) var(--s33); }
@@ -148,8 +178,10 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--s33) var(--s66);
 .menu-link.disabled:hover { color: var(--graphite); }
 
 /* Tool header */
-.tool-header { display: flex; align-items: center; gap: var(--s15); padding: var(--s22) 0; }
-.tool-name { font-weight: var(--light); font-size: 19px; }
+/* TASK 2: the hero title+desc already shows the tool name at the top, so hide the
+   repeated name in the header row — only the Back button remains. */
+.tool-header { display: flex; align-items: center; gap: var(--s15); padding: var(--s15) 0; }
+.tool-name { display: none; }
 
 /* Panels */
 .panel { background: none; border: 1px solid var(--steel); }
@@ -228,12 +260,14 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--s33) var(--s66);
 .btn.ghost:hover { background: none; border-color: var(--ink); color: var(--ink); }
 
 /* Modal */
-/* The custom titlebar is a 30px sticky bar at the very top (z-index 200). The overlay
-   sits below it (z-index 50), so we leave room for the titlebar and center within the
-   remaining space. align-items:center + the top inset keep a tall modal's top reachable;
-   if a modal is taller than the viewport, .modal caps its height and scrolls internally. */
-.modal-overlay { position: fixed; inset: 30px 0 0 0; background: rgba(15, 14, 18, 0.6); display: flex; align-items: center; justify-content: center; z-index: 50; padding: var(--s22); overflow: auto; }
-.modal { background: var(--canvas); border: 1px solid var(--ink); width: 100%; max-width: 640px; max-height: calc(100vh - 60px); display: flex; flex-direction: column; }
+/* TASK 3: The custom titlebar is a 30px sticky bar at the very top (z-index 200).
+   The overlay covers the full viewport (inset:0) with 40px top padding to clear the
+   titlebar and a matching 40px bottom padding for equal breathing room. The modal is
+   capped to the remaining height so a TALL modal never grows past the centered space —
+   that is what previously clipped its top under align-items:center + overflow:auto.
+   Its top stays fully visible and .modal-body scrolls internally. */
+.modal-overlay { position: fixed; inset: 0; background: rgba(15, 14, 18, 0.6); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 40px var(--s22); overflow: auto; }
+.modal { background: var(--canvas); border: 1px solid var(--ink); width: 100%; max-width: 640px; max-height: calc(100vh - 80px); display: flex; flex-direction: column; }
 .modal-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: var(--s22) var(--s22) var(--s15); border-bottom: 1px solid var(--steel); }
 .modal-head h2 { margin: 0; font-size: 19px; font-weight: var(--light); }
 .optional { color: var(--graphite); font-size: 13px; }
@@ -275,8 +309,16 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--s33) var(--s66);
 
 /* Photo Effects */
 .fx-wrap { display: flex; gap: var(--s22); align-items: flex-start; flex-wrap: wrap; padding: var(--s15) var(--s15) var(--s15) var(--s22); }
-.fx-side { width: 340px; flex: 0 0 340px; max-width: 100%; display: flex; flex-direction: column; gap: var(--s15); }
-.fx-main { flex: 1; min-width: 320px; display: flex; flex-direction: column; gap: var(--s15); }
+/* TASK 6: landscape control area. The panels (input / effects stack / params /
+   color-palette+adjust) flow across two balanced columns instead of one tall
+   vertical stack, greatly reducing scrolling. CSS multi-column packs panels of
+   differing heights without leaving the gaps a fixed grid would. The preview/
+   canvas stays prominent on the right. */
+.fx-side { width: 540px; flex: 1 1 540px; max-width: 100%;
+  column-count: 2; column-gap: var(--s15); }
+.fx-side > .fx-pnl { break-inside: avoid; margin-bottom: var(--s15); width: 100%; }
+.fx-main { flex: 2 1 380px; min-width: 320px; display: flex; flex-direction: column; gap: var(--s15); }
+@media (max-width: 720px) { .fx-side { column-count: 1; width: 100%; flex-basis: 100%; } }
 .fx-pnl { border: 1px solid var(--steel); }
 .fx-pnl-h { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--graphite); padding: 8px 12px; border-bottom: 1px solid var(--steel); }
 .fx-pnl-b { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -535,6 +577,10 @@ body.reduce-motion .gh-fl-fill, body.reduce-motion .gh-fl-plane { transition: no
 .ai-preview { flex: 1; min-width: 280px; }
 .ai-img { max-width: 100%; max-height: 360px; image-rendering: auto; }
 .ai-notice { border: 1px solid var(--steel); padding: 10px 12px; font-size: 13px; color: var(--graphite); background: var(--carbon); }
+.ai-notice.clickable { cursor: pointer; }
+.ai-notice.clickable:hover { color: var(--ink); border-color: var(--link); }
+/* AI Tools hub reuses .home-grid / .home-card; just reset the wrapper border. */
+.ai-hub { border-top: none; }
 .ai-fmt { display: flex; flex-direction: column; gap: 6px; }
 .ai-fmt-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--graphite); }
 .ai-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
@@ -629,11 +675,8 @@ body[data-theme="dark"].reduce-transparency .ap-controls { background: none !imp
 body[data-theme="dark"] .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 body[data-theme="dark"] .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 body[data-theme="dark"] .btn.primary .ic { color: #fff; }
-body[data-theme="dark"] .seg-btn.on { background: var(--accent); color: #fff; }
 body[data-theme="dark"] .switch.on { background: var(--accent); border-color: var(--accent); }
 body[data-theme="dark"] .switch.on span { background: #fff; }
-body[data-theme="dark"] .set-cat.on { background: var(--accent-soft); color: #fff; }
-body[data-theme="dark"] .set-cat.on .ic { color: #fff; }
 /* Destructive action buttons keep their red intent, readable on dark. */
 body[data-theme="dark"] .btn.danger { color: #fff; }
 
@@ -659,11 +702,21 @@ body.reduce-transparency .modal-overlay { background: rgba(15,14,18,0.96) !impor
 .set-cat .ic { width: 16px; height: 16px; color: var(--graphite); flex: 0 0 auto; }
 .set-cat:hover { background: var(--canvas); }
 .set-cat.on { background: var(--accent-soft, var(--canvas)); color: var(--link); }
-body[data-theme="dark"] .set-cat.on { background: var(--accent-soft); color: #fff; }
-body[data-theme="dark"] .set-cat.on .ic { color: #fff; }
+/* TASK 1: settings active tab + segmented control use a neutral elevated-grey
+   highlight in dark mode (NOT blue). Scoped to the settings modal so the rest of
+   the dark-mode blue accent (.btn.primary, .switch.on, etc.) is unaffected. */
+body[data-theme="dark"] .set-cat.on { background: #2f2f37; color: var(--ink); }
+body[data-theme="dark"] .set-cat.on .ic { color: var(--ink); }
+body[data-theme="dark"] #settingsModal .seg-btn.on { background: #2f2f37; color: var(--ink); }
 .settings-content { flex: 1; min-width: 0; padding: 0 4px 16px 20px; overflow-y: auto; }
 .set-h { font-size: 14px; font-weight: var(--light); text-transform: lowercase; color: var(--graphite); margin: 18px 0 12px; }
 .set-h:first-child { margin-top: 2px; }
+/* TASK 5: compact the Advanced category so every section (incl. Debug) fits in the
+   fixed-size settings box without scrolling. Headings sit close to their content. */
+.set-advanced .set-h { margin: 12px 0 6px; }
+.set-advanced .set-h:first-child { margin-top: 0; }
+.set-advanced .set-note { margin: 4px 0 2px; line-height: 1.4; }
+.set-advanced .action-row { padding: 4px 0 2px; }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--steel); }
 .set-l { font-size: 14px; font-weight: var(--thin); }
 .set-d { font-size: 13px; color: var(--graphite); margin-top: 4px; }

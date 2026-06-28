@@ -10,6 +10,7 @@ const state = {
   modalJobId: null,
   openMenuItem: null, // remember last opened item per section
   backTo: 'home', // where the Back button should return to
+  currentTool: null, // { id, label } of the tool screen currently open (null on home/profile/settings)
 };
 
 function uid() { return 'j' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
@@ -61,7 +62,7 @@ function customSelect(sel) {
 function enhanceSelects(root) { (root || document).querySelectorAll('select:not([data-cs])').forEach(customSelect); }
 function setHero(title, sub) { $('heroTitle').textContent = title; $('heroSub').textContent = sub; }
 
-const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel'];
+const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'aiHubPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel'];
 function hideAll() {
   PANELS.forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
   document.body.classList.remove('on-profile');
@@ -154,6 +155,7 @@ function bouncyAccordion(container, categories, onItemClick) {
 // ---------- section routing ----------
 function showHome() {
   state.section = 'home'; state.ws = null; state.backTo = 'home';
+  state.currentTool = null; updateFavBtn();
   hideAll();
   setHero('Media Toolbox', 'Your local media workshop');
   $('homeView').classList.remove('hidden');
@@ -163,6 +165,8 @@ function showSection(section) {
   state.ws = null;
   // The menu root: Back goes HOME.
   state.backTo = 'home';
+  // A menu root is not a tool screen → no heart.
+  state.currentTool = null; updateFavBtn();
   hideAll();
   const labels = { convert: 'Convert', compress: 'Compress', tools: 'Tools' };
   if (section === 'convert') { setHero('Convert', 'Pick a converter'); $('convertMenu').classList.remove('hidden'); bouncyAccordion($('convertMenu'), window.CONVERT_CATEGORIES, (it) => openItem(it, 'convert')); }
@@ -175,6 +179,7 @@ function showSection(section) {
 
 function backToMenu() {
   if (state.backTo === 'home') showHome();
+  else if (state.backTo === 'ai') openAiHub();
   else showSection(state.backTo);
 }
 
@@ -182,6 +187,8 @@ function backToMenu() {
 function openItem(item, kind) {
   // Opened from a menu → Back returns to that menu (kind 'tool' maps to 'tools').
   state.backTo = kind === 'tool' ? 'tools' : (kind || 'home');
+  state.currentTool = { id: item.id, label: item.label };
+  updateFavBtn();
   if (item.engine === 'special') return openSpecial(item.id);
   if (item.engine === 'colorpicker') return openColorPicker();
   if (item.engine === 'stretch') return openStretch();
@@ -500,6 +507,7 @@ function fxClosest(r, g, b, pal) {
 
 function openPhotoEffects() {
   hideAll(); state.section = 'tools'; state.ws = null;
+  state.currentTool = { id: 'photo-effects', label: 'Photo Effects' }; updateFavBtn();
   $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Photo Effects';
   setHero('Photo Effects', 'Stackable image effects — dither, ascii, halftone, glitch & more');
   $('fxPanel').classList.remove('hidden');
@@ -1639,6 +1647,11 @@ function openSpecial(id) {
   hideAll(); $('toolHeader').classList.remove('hidden');
   const names = { youtube: 'Video Downloader', 'unit-converter': 'Unit Converter', 'time-converter': 'Time Converter', 'archive-converter': 'Archive Converter' };
   $('toolName').textContent = names[id] || '';
+  // Track the current tool for the favorites heart. The Video Downloader is a
+  // non-registry tool keyed 'downloader'; unit/time use their registry ids.
+  if (id === 'youtube') state.currentTool = { id: 'downloader', label: 'Video Downloader' };
+  else if (id === 'unit-converter' || id === 'time-converter') state.currentTool = { id, label: names[id] };
+  updateFavBtn();
   if (id === 'youtube') { setHero('Video Downloader', "Paste a link and it'll download & convert — powered by yt-dlp"); $('ytPanel').classList.remove('hidden'); }
   else if (id === 'unit-converter') { setHero('Unit Converter', 'Convert between common units'); $('unitPanel').classList.remove('hidden'); }
   else if (id === 'time-converter') { setHero('Time Converter', 'Time zones and Unix timestamps'); $('timePanel').classList.remove('hidden'); }
@@ -1650,6 +1663,7 @@ const META_LABELS = { title: 'Title', artist: 'Artist', album: 'Album', album_ar
 const metaState = { path: null, original: {}, keys: [], kind: null, hasAudio: false, fileInfo: null, editable: [], readonly: [] };
 function openMetaEditor() {
   hideAll(); state.section = 'tools';
+  state.currentTool = { id: 'metadata', label: 'Metadata Editor' }; updateFavBtn();
   $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Metadata Editor';
   setHero('Metadata Editor', 'Edit or scrub the metadata baked into a media file');
   $('metaPanel').classList.remove('hidden');
@@ -1941,6 +1955,9 @@ function buildSearchIndex() {
     ['convert', window.CONVERT_CATEGORIES],
     ['compress', window.COMPRESS_CATEGORIES],
     ['tool', window.TOOL_CATEGORIES],
+    // AI tools were delisted from the Tools accordion (they live in the Home AI
+    // hub) but stay searchable; openItem routes them by engine like any tool.
+    ['tool', window.AI_CATEGORIES],
   ];
   for (const [kind, cats] of groups) {
     if (!Array.isArray(cats)) continue;
@@ -2095,6 +2112,105 @@ function wireFirstRun() {
     active = false;
     if (progressClose) { progressClose(); progressClose = null; }
     toast('AI models ready');
+  });
+}
+
+// ---------- favorites / saved tools ----------
+// Persisted in localStorage as an array of {id,label}; capped + deduped by id.
+// Surfaced two ways: a heart toggle in #toolHeader (current tool) and a small
+// appbar popover (modeled on the recents dropdown) listing every saved tool.
+const FAVS_KEY = 'mtb_favorites';
+const FAV_HEART_FILLED = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.3 4.3 12.6a4.6 4.6 0 0 1 0-6.5 4.6 4.6 0 0 1 6.5 0l1.2 1.2 1.2-1.2a4.6 4.6 0 0 1 6.5 0 4.6 4.6 0 0 1 0 6.5Z"/></svg>';
+const FAV_HEART_OUTLINE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.3 4.3 12.6a4.6 4.6 0 0 1 0-6.5 4.6 4.6 0 0 1 6.5 0l1.2 1.2 1.2-1.2a4.6 4.6 0 0 1 6.5 0 4.6 4.6 0 0 1 0 6.5Z"/></svg>';
+
+function loadFavs() { try { return JSON.parse(localStorage.getItem(FAVS_KEY)) || []; } catch { return []; } }
+function saveFavs(arr) {
+  // Dedupe by id (keep first occurrence) and cap at ~50.
+  const seen = new Set(); const out = [];
+  for (const f of arr) { if (!f || !f.id || seen.has(f.id)) continue; seen.add(f.id); out.push({ id: f.id, label: f.label }); }
+  try { localStorage.setItem(FAVS_KEY, JSON.stringify(out.slice(0, 50))); } catch { /* */ }
+}
+function isFav(id) { return !!id && loadFavs().some((f) => f.id === id); }
+function toggleFav(id, label) {
+  if (!id) return false;
+  let arr = loadFavs();
+  const has = arr.some((f) => f.id === id);
+  if (has) arr = arr.filter((f) => f.id !== id);
+  else arr.unshift({ id, label: label || id }); // newest first
+  saveFavs(arr);
+  const now = !has;
+  if ($('favsPanel') && !$('favsPanel').classList.contains('hidden')) renderFavs();
+  return now;
+}
+
+// Reflect the current tool's favorite state on the #toolHeader heart; hide when
+// there's no current tool (home/profile/settings).
+function updateFavBtn() {
+  const btn = $('favBtn'); if (!btn) return;
+  const ct = state.currentTool;
+  if (!ct || !ct.id) { btn.classList.add('hidden'); return; }
+  btn.classList.remove('hidden');
+  const on = isFav(ct.id);
+  btn.classList.toggle('on', on);
+  btn.innerHTML = on ? FAV_HEART_FILLED : FAV_HEART_OUTLINE;
+  btn.title = on ? 'Remove from saved tools' : 'Save this tool';
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+// Open a saved tool by id: resolve through the registries, falling back to the
+// non-registry special openers (metadata, downloader).
+function openFavById(id, label) {
+  state.backTo = 'home';
+  toggleFavs(false);
+  if (id === 'metadata') return openMetaEditor();
+  if (id === 'downloader') return openSpecial('youtube');
+  const fromConv = window.findConverter(id);
+  if (fromConv) return openItem(fromConv, 'convert');
+  const fromComp = window.findCompressor(id);
+  if (fromComp) return openItem(fromComp, 'compress');
+  const fromTool = window.findTool(id);
+  if (fromTool) return openItem(fromTool, 'tool');
+  const fromAi = window.findAiTool && window.findAiTool(id);
+  if (fromAi) return openItem(fromAi, 'tool');
+  toast(label ? `Couldn’t open “${label}”` : 'Tool not found', { kind: 'error' });
+}
+
+function renderFavs() {
+  const body = $('favsBody'); if (!body) return;
+  const arr = loadFavs();
+  if (!arr.length) {
+    body.innerHTML = '<div class="recent-empty">No saved tools yet — tap the heart on any tool</div>';
+    return;
+  }
+  body.innerHTML = arr.map((f, i) => (
+    `<div class="recent-row fav-row" data-i="${i}">` +
+      `<button class="recent-open" data-open="${i}"><span class="recent-name">${mtbEsc(f.label)}</span></button>` +
+      `<button class="fav-remove" data-remove="${i}" title="Remove from saved"><span class="ic">${FAV_HEART_FILLED}</span></button>` +
+    '</div>'
+  )).join('');
+  body.querySelectorAll('[data-open]').forEach((el) => el.addEventListener('click', () => { const f = arr[Number(el.dataset.open)]; if (f) openFavById(f.id, f.label); }));
+  body.querySelectorAll('[data-remove]').forEach((el) => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const f = arr[Number(el.dataset.remove)];
+    if (f) { toggleFav(f.id, f.label); renderFavs(); updateFavBtn(); }
+  }));
+}
+function toggleFavs(force) {
+  const p = $('favsPanel'); if (!p) return;
+  const show = force != null ? force : p.classList.contains('hidden');
+  if (show) { renderFavs(); p.classList.remove('hidden'); } else p.classList.add('hidden');
+}
+function wireFavs() {
+  const fb = $('favBtn');
+  if (fb) fb.addEventListener('click', () => {
+    const ct = state.currentTool; if (!ct || !ct.id) return;
+    toggleFav(ct.id, ct.label); updateFavBtn();
+  });
+  const navBtn = $('favsBtn');
+  if (navBtn) navBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFavs(); });
+  document.addEventListener('click', (e) => {
+    const p = $('favsPanel');
+    if (p && !p.classList.contains('hidden') && !p.contains(e.target) && e.target !== $('favsBtn') && !($('favsBtn') && $('favsBtn').contains(e.target))) p.classList.add('hidden');
   });
 }
 
@@ -2303,6 +2419,7 @@ function settingsHtml(cat, s) {
     const caps = state.caps || {};
     const whisperReady = caps.hasWhisper;
     const bgReady = caps.hasBgRemoval;
+    const upscalerReady = caps.hasRealesrgan;
     return `
     <h3 class="set-h">on-device models</h3>
     <p class="set-note">download models for the local AI tools (transcription, background removal). models run entirely on your device — nothing is uploaded. larger models are slower but more accurate. you can remove any model to free up disk space.</p>
@@ -2314,6 +2431,10 @@ function settingsHtml(cat, s) {
       <span class="ai-dot ${bgReady ? 'on' : 'off'}"></span>
       <span>background removal engine — ${bgReady ? 'engine ready' : 'not found'}</span>
     </div>
+    <div class="ai-engine">
+      <span class="ai-dot ${upscalerReady ? 'on' : 'off'}"></span>
+      <span>upscaler (Real-ESRGAN) — ${upscalerReady ? 'bundled · ready (no download needed)' : 'not found'}</span>
+    </div>
     <div class="ai-models" id="aiModels"><div class="set-note">loading models…</div></div>`;
   }
 
@@ -2323,6 +2444,7 @@ function settingsHtml(cat, s) {
     <p class="set-note">where converted, compressed, and downloaded files are saved by default. you can still override the output folder per job.</p>`;
 
   if (cat === 'advanced') return `
+    <div class="set-advanced">
     <h3 class="set-h">about</h3>
     <div class="set-note">media toolbox v${s.appVersion || (state.caps && state.caps.appVersion) || '1.0.0'}</div>
     <h3 class="set-h">settings data</h3>
@@ -2333,7 +2455,8 @@ function settingsHtml(cat, s) {
     <p class="set-note">clears locally stored app cache/data. this is a destructive action.</p>
     <h3 class="set-h">debug</h3>
     ${actionRow([['setDevTools', 'open developer tools', 'search'], ['setDiag', 'copy diagnostics', 'download']])}
-    <p class="set-note">developer tools open chromium devtools for troubleshooting. copy diagnostics puts app version, available binaries, and key paths on your clipboard.</p>`;
+    <p class="set-note">developer tools open chromium devtools for troubleshooting. copy diagnostics puts app version, available binaries, and key paths on your clipboard.</p>
+    </div>`;
 
   return '';
 }
@@ -2574,12 +2697,61 @@ function wireFpsPreview() {
   });
 }
 
+// Re-query installed models and refresh any AI surface currently on screen:
+// the open AI tool's model dropdown / "no model" notice, and the Settings →
+// Local AI manager rows. Called on the aimodel:changed broadcast so installing
+// (or removing) a model in Settings takes effect in the tools with no restart.
+function refreshAiModelState() {
+  try {
+    if (!$('transcribePanel').classList.contains('hidden')) trRefreshModels();
+  } catch { /* */ }
+  try {
+    if (!$('removebgPanel').classList.contains('hidden')) rbRefreshModels();
+  } catch { /* */ }
+  // Settings manager (only present while the Local AI tab is rendered).
+  try {
+    const host = $('aiModels');
+    if (host && window.api.aimodels) {
+      window.api.aimodels.list().then(renderAiModels).catch(() => { /* */ });
+    }
+  } catch { /* */ }
+}
+
+// ---------- AI Tools hub ----------
+// A simple on-brand landing for the three local AI tools (delisted from the
+// Tools accordion). Cards route into each tool with state.backTo='ai' so Back
+// returns here; Back from the hub itself (toolHeader) goes Home.
+let _aiHubWired = false;
+function openAiHub() {
+  hideAll(); state.section = 'ai'; state.ws = null;
+  state.currentTool = null; updateFavBtn();
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'AI Tools';
+  setHero('AI Tools', 'On-device AI — transcribe, upscale and cut out backgrounds, all locally');
+  $('aiHubPanel').classList.remove('hidden');
+  // Back from the hub returns Home.
+  state.backTo = 'home';
+  if (!_aiHubWired) {
+    _aiHubWired = true;
+    $('aiHubPanel').querySelectorAll('.home-card[data-ai]').forEach((card) => {
+      card.addEventListener('click', () => {
+        state.backTo = 'ai';
+        const which = card.dataset.ai;
+        if (which === 'transcribe') openTranscribe();
+        else if (which === 'upscale') openUpscaleAi();
+        else if (which === 'removebg') openRemoveBg();
+      });
+    });
+  }
+  injectIcons($('aiHubPanel'));
+}
+
 // ---------- Subtitle / Transcript Extractor (whisper) ----------
 // Lazy-wired on first open. Model dropdown is filled from window.api.aimodels.list()
 // showing only INSTALLED whisper models; if none, a notice is shown and Run is disabled.
 const trState = { path: null, wired: false };
 async function openTranscribe() {
   hideAll(); state.section = 'tools'; state.ws = null;
+  state.currentTool = { id: 'transcribe', label: 'Subtitle / Transcript Extractor' }; updateFavBtn();
   $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Subtitle / Transcript Extractor';
   setHero('Subtitle / Transcript Extractor', 'Local speech-to-text — generate SRT, TXT or VTT from any video or audio');
   $('transcribePanel').classList.remove('hidden');
@@ -2630,6 +2802,9 @@ function wireTranscribe() {
     trUpdateRun();
   });
   $('trModel').addEventListener('change', trUpdateRun);
+  // The "no model" notice is a shortcut to the model manager.
+  const trNotice = $('trNoModel');
+  if (trNotice) { trNotice.classList.add('clickable'); trNotice.addEventListener('click', () => openSettings('localai')); }
   ['trFmtSrt', 'trFmtTxt', 'trFmtVtt'].forEach((id) => $(id).addEventListener('change', trUpdateRun));
   $('trRun').addEventListener('click', async () => {
     if (!trState.path) return;
@@ -2662,6 +2837,7 @@ function wireTranscribe() {
 const upState = { path: null, wired: false };
 function openUpscaleAi() {
   hideAll(); state.section = 'tools'; state.ws = null;
+  state.currentTool = { id: 'image-upscaler-ai', label: 'AI Image Upscaler' }; updateFavBtn();
   $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'AI Image Upscaler';
   setHero('AI Image Upscaler', 'Real-ESRGAN super-resolution — enlarge and enhance images locally');
   $('upscalePanel').classList.remove('hidden');
@@ -2740,6 +2916,7 @@ const RB_STD = [0.229, 0.224, 0.225];
 
 async function openRemoveBg() {
   hideAll(); state.section = 'tools'; state.ws = null;
+  state.currentTool = { id: 'remove-bg', label: 'Background Removal' }; updateFavBtn();
   $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Background Removal';
   setHero('Background Removal', 'AI cutout — remove an image background locally and export a transparent PNG');
   $('removebgPanel').classList.remove('hidden');
@@ -2801,6 +2978,9 @@ function wireRemoveBg() {
     $('rbColorField').style.display = $('rbBg').value === 'custom' ? '' : 'none';
   });
   $('rbModel').addEventListener('change', rbUpdateRun);
+  // The "no model" notice is a shortcut to the model manager.
+  const rbNotice = $('rbNoModel');
+  if (rbNotice) { rbNotice.classList.add('clickable'); rbNotice.addEventListener('click', () => openSettings('localai')); }
   $('rbLoad').addEventListener('click', async () => {
     const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
     rbState.path = paths[0]; $('rbName').textContent = baseName(paths[0]);
@@ -2920,6 +3100,7 @@ let lastContribs = null;   // cached so the calendar can re-theme on reopen
 let lastStars = null;      // cached star count for the flight card
 function openProfile() {
   hideAll(); state.section = 'profile'; state.ws = null;
+  state.currentTool = null; updateFavBtn();
   document.body.classList.add('on-profile'); // hides hero, tightens layout
   $('toolHeader').classList.remove('hidden'); $('toolName').textContent = '';
   $('profilePanel').classList.remove('hidden');
@@ -3248,7 +3429,7 @@ async function init() {
   $('homeBtn').addEventListener('click', showHome);
   $('profileBtn').addEventListener('click', openProfile);
   $('settingsBtn').addEventListener('click', () => openSettings('appearance'));
-  document.querySelectorAll('.home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else if (c.dataset.tool === 'photofx') { state.backTo = 'home'; openPhotoEffects(); } else showSection(c.dataset.section); }));
+  document.querySelectorAll('#homeView .home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else if (c.dataset.tool === 'photofx') { state.backTo = 'home'; openPhotoEffects(); } else if (c.dataset.tool === 'ai') { state.backTo = 'home'; openAiHub(); } else showSection(c.dataset.section); }));
   wireTitlebar(); wireStretch(); wireMetaEditor();
   $('settingsClose').addEventListener('click', () => $('settingsModal').classList.add('hidden'));
   $('settingsModal').addEventListener('click', (e) => { if (e.target === $('settingsModal')) $('settingsModal').classList.add('hidden'); });
@@ -3266,10 +3447,15 @@ async function init() {
   $('modalOverlay').addEventListener('click', (e) => { if (e.target === $('modalOverlay')) closeModal(); });
   $('modalApply').addEventListener('click', applyModal);
   $('modalReset').addEventListener('click', () => { const e = findEntry(state.modalJobId); if (e) { const of = e.settings.outputFormat; e.settings = { ...defaultSettingsFor(e.mediaType), ...(state.ws ? state.ws.base : {}) }; e.settings.outputFormat = of; $('modalBody').innerHTML = buildModalBody(e); wireModalBody(e); injectIcons($('modalBody')); } });
-  wireDnd(); wireJobEvents(); wireYoutube(); wireColorPicker(); wireRecents(); wireSearch(); unitInit(); timeInit(); wireAudioPlayer();
+  wireDnd(); wireJobEvents(); wireYoutube(); wireColorPicker(); wireRecents(); wireFavs(); wireSearch(); unitInit(); timeInit(); wireAudioPlayer();
   enhanceSelects(document);
   // Single-instance "open another?" prompt.
   window.api.onSecondInstance(() => $('instanceModal').classList.remove('hidden'));
+  // Live model-state updates: when a model finishes downloading or is removed in
+  // any window, refresh whichever AI tool screen is open + the Settings manager.
+  if (window.api.aimodels && window.api.aimodels.onAimodelChanged) {
+    window.api.aimodels.onAimodelChanged(() => refreshAiModelState());
+  }
   wireFirstRun();
   $('instCancel').addEventListener('click', () => $('instanceModal').classList.add('hidden'));
   $('instOpen').addEventListener('click', () => { window.api.newWindow(); $('instanceModal').classList.add('hidden'); });

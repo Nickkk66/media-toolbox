@@ -85,8 +85,17 @@ function registerIpc(getWindow) {
 
   // ---- AI Model Manager (download/remove optional model weights) ----
   ipcMain.handle('aimodel:list', () => aiModels.status());
-  ipcMain.handle('aimodel:download', (_e, { feature, id }) => aiModels.download(feature, id, (p) => send('aimodel:progress', p)));
-  ipcMain.handle('aimodel:remove', (_e, { feature, id }) => aiModels.remove(feature, id));
+  ipcMain.handle('aimodel:download', async (_e, { feature, id }) => {
+    const res = await aiModels.download(feature, id, (p) => send('aimodel:progress', p));
+    // A model just became available — let every open window refresh its tools.
+    send('aimodel:changed', { feature, id, installed: true });
+    return res;
+  });
+  ipcMain.handle('aimodel:remove', (_e, { feature, id }) => {
+    const ok = aiModels.remove(feature, id);
+    if (ok) send('aimodel:changed', { feature, id, installed: false });
+    return ok;
+  });
 
   // ---- YouTube / yt-dlp ----
   let ytController = null;
