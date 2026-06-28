@@ -59,7 +59,6 @@
         <button class="home-card" data-tool="metadata"><span class="home-ic" data-icon="metadata"></span><span class="home-title">Metadata Editor</span><span class="home-desc">edit or scrub file metadata</span></button>
         <button class="home-card net-only" data-tool="downloader" data-offline-title="Requires internet"><span class="home-ic" data-icon="download"></span><span class="home-title">Video Downloader</span><span class="home-desc">paste a link · 20+ sites</span></button>
         <button class="home-card net-only" data-tool="spotify" data-offline-title="Requires internet"><span class="home-ic" data-icon="spotify"></span><span class="home-title">Spotify Downloader</span><span class="home-desc">song mp3 · album cover</span></button>
-        <button class="home-card" data-tool="photofx"><span class="home-ic" data-icon="image"></span><span class="home-title">Photo Effects</span><span class="home-desc">filters · dither · glitch · ascii</span></button>
         <button class="home-card" data-tool="ai"><span class="home-ic" data-icon="tools"></span><span class="home-title">AI Tools</span><span class="home-desc">transcribe · upscale · remove bg</span></button>
       </section>
 
@@ -513,9 +512,14 @@
         </div>
         <div class="tr-foot">
           <p class="hint tr-hint">Speech is synthesized entirely on your device — works offline. Voices are downloaded once in Settings → Local AI.</p>
-          <button id="ttsRun" class="btn primary big" disabled>Generate <span class="ic" data-icon="arrowRight"></span></button>
+          <button id="ttsRun" class="btn primary big" disabled>Synthesize <span class="ic" data-icon="arrowRight"></span></button>
         </div>
         <div id="ttsProgress" class="yt-progress hidden"><div class="bar"><div id="ttsBar" class="bar-fill"></div></div><div id="ttsStatus" class="fr-status"></div></div>
+        <audio id="ttsAudio" class="tts-audio hidden" controls></audio>
+        <div id="ttsPreviewFoot" class="tts-preview-foot hidden">
+          <button id="ttsDownload" class="btn primary big">Download <span class="ic" data-icon="download"></span></button>
+        </div>
+        <div id="ttsResult" class="tts-result hidden"><span id="ttsResultText" class="fr-status"></span></div>
       </div>
 
       <!-- Color Picker -->

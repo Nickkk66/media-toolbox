@@ -38,6 +38,17 @@ function cleanupFpsTemp() {
   try { fs.rmSync(fpsTempDir(), { recursive: true, force: true }); } catch { /* */ }
 }
 
+// Temp dir for Text-to-Speech preview synthesis. Same lifecycle as the FPS temp:
+// lives under the OS temp folder, wiped on app quit (see main.js).
+function ttsTempDir() {
+  return path.join(app.getPath('temp'), 'mtb-tts');
+}
+
+// Remove the TTS preview cache dir (called on quit).
+function cleanupTtsTemp() {
+  try { fs.rmSync(ttsTempDir(), { recursive: true, force: true }); } catch { /* */ }
+}
+
 function allExtensions() {
   const set = new Set();
   for (const mod of Object.values(media.MODULES)) {
@@ -149,6 +160,81 @@ function registerIpc(getWindow) {
     }
   });
   ipcMain.handle('spotify:cancel', () => { if (spotController) spotController.cancel(); return true; });
+
+  // ---- About audio player: list songs in src/songs with embedded metadata ----
+  ipcMain.handle('songs:list', async () => {
+    const { execFile } = require('child_process');
+    const os = require('os');
+
+    // Resolve the songs dir robustly: dev <projectRoot>/src/songs, packaged
+    // <appPath>/src/songs, plus a __dirname-relative fallback.
+    const candidates = [];
+    try { candidates.push(path.join(app.getAppPath(), 'src', 'songs')); } catch { /* */ }
+    candidates.push(path.resolve(__dirname, '..', 'songs'));          // src/main -> src/songs
+    candidates.push(path.resolve(__dirname, '..', '..', 'src', 'songs'));
+    let songsDir = '';
+    for (const c of candidates) { try { if (fs.existsSync(c)) { songsDir = c; break; } } catch { /* */ } }
+    if (!songsDir) return [];
+
+    const AUDIO_RE = /\.(mp3|m4a|flac|ogg|opus|wav)$/i;
+    let files = [];
+    try {
+      files = fs.readdirSync(songsDir).filter((f) => AUDIO_RE.test(f))
+        .map((f) => path.join(songsDir, f));
+    } catch { return []; }
+    if (!files.length) return [];
+
+    const fileUrl = (p) => 'file:///' + p.replace(/\\/g, '/').replace(/ /g, '%20');
+
+    const probeTags = (file) => new Promise((resolve) => {
+      execFile(ffmpegPath.ffprobe, [
+        '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', file,
+      ], { windowsHide: true, maxBuffer: 1 << 22 }, (err, stdout) => {
+        if (err) return resolve({});
+        try {
+          const j = JSON.parse(stdout || '{}');
+          const tags = (j.format && j.format.tags) || {};
+          // ffprobe tag casing varies; normalize keys to lowercase.
+          const low = {};
+          for (const k of Object.keys(tags)) low[k.toLowerCase()] = tags[k];
+          const dur = j.format && j.format.duration ? Math.round(parseFloat(j.format.duration)) : 0;
+          const hasCover = Array.isArray(j.streams) && j.streams.some((s) => s.disposition && s.disposition.attached_pic);
+          resolve({ tags: low, durationSec: dur || 0, hasCover });
+        } catch { resolve({}); }
+      });
+    });
+
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mtb-cover-'));
+    const extractCover = (file, idx) => new Promise((resolve) => {
+      const outJpg = path.join(tmpRoot, `cover_${idx}.jpg`);
+      execFile(ffmpegPath.ffmpeg, [
+        '-y', '-hide_banner', '-loglevel', 'error', '-i', file,
+        '-an', '-map', '0:v', '-frames:v', '1', outJpg,
+      ], { windowsHide: true }, (err) => {
+        if (!err && fs.existsSync(outJpg)) return resolve(fileUrl(outJpg));
+        resolve('');
+      });
+    });
+
+    const result = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const info = await probeTags(file);
+      const tags = info.tags || {};
+      const baseName = path.basename(file).replace(AUDIO_RE, '');
+      const title = (tags.title && tags.title.trim()) || baseName;
+      const artist = (tags.artist || tags.album_artist || '').trim();
+      const album = (tags.album || '').trim();
+      let cover = '';
+      if (info.hasCover) { try { cover = await extractCover(file, i); } catch { /* */ } }
+      if (!cover) {
+        const fallbackJpg = path.join(songsDir, 'cover.jpg');
+        if (fs.existsSync(fallbackJpg)) cover = fileUrl(fallbackJpg);
+      }
+      result.push({ src: fileUrl(file), title, artist, album, cover, durationSec: info.durationSec || 0 });
+    }
+    return result;
+  });
 
   ipcMain.handle('media:typeForPath', (_e, p) => media.typeForPath(p));
 
@@ -806,7 +892,10 @@ function registerIpc(getWindow) {
   // Piper reads text from STDIN and writes a WAV: `piper -m <voice.onnx> -f out.wav`.
   // The voice's `.onnx.json` config must sit beside the `.onnx` (handled by the
   // aiModels pair-download). If mp3 is requested, ffmpeg transcodes the wav.
-  ipcMain.handle('ai:tts', async (_e, { text, voiceId, format, outputDir }) => {
+  // Synthesize → preview: produce the final-format file in a TEMP dir and return
+  // its path. Nothing is written to the user's output folder until they hit
+  // Download (ai:tts:save). The temp dir is wiped on quit (see main.js).
+  ipcMain.handle('ai:tts', async (_e, { text, voiceId, format }) => {
     if (!ffmpegPath.hasPiper()) {
       throw new Error('Text-to-speech engine (Piper) is not available in this build.');
     }
@@ -822,54 +911,61 @@ function registerIpc(getWindow) {
     }
 
     const fmt = (format === 'mp3') ? 'mp3' : 'wav';
-    const dir = resolveOutputDir({ outputDir }, app.getPath('downloads'));
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
 
-    // Temp wav under the OS temp folder; cleaned up at the end.
-    const tmpDir = path.join(app.getPath('temp'), 'mtb-tts');
+    // Fresh temp dir; clear the previous preview so only the latest one lingers.
+    cleanupTtsTemp();
+    const tmpDir = ttsTempDir();
     try { fs.mkdirSync(tmpDir, { recursive: true }); } catch { /* */ }
     const wavPath = path.join(tmpDir, `tts_${Date.now()}.wav`);
 
     send('ai:tts:progress', { stage: 'synth', indeterminate: true });
 
     // Step 1: synthesize the WAV with Piper (text piped to stdin).
-    try {
-      await new Promise((resolve, reject) => {
-        let stderrTail = '';
-        const proc = spawn(ffmpegPath.piper, ['-m', voiceFile, '-f', wavPath], { windowsHide: true });
-        proc.stderr.on('data', (b) => { stderrTail = (stderrTail + b.toString()).slice(-4000); });
-        proc.on('error', (err) => reject(new Error(err.message)));
-        proc.on('close', (code) => {
-          if (code === 0 && fs.existsSync(wavPath)) resolve();
-          else reject(new Error((stderrTail.split('\n').filter(Boolean).pop()) || 'Speech synthesis failed.'));
-        });
-        try { proc.stdin.write(say); proc.stdin.end(); } catch (err) { reject(new Error(err.message)); }
+    await new Promise((resolve, reject) => {
+      let stderrTail = '';
+      const proc = spawn(ffmpegPath.piper, ['-m', voiceFile, '-f', wavPath], { windowsHide: true });
+      proc.stderr.on('data', (b) => { stderrTail = (stderrTail + b.toString()).slice(-4000); });
+      proc.on('error', (err) => reject(new Error(err.message)));
+      proc.on('close', (code) => {
+        if (code === 0 && fs.existsSync(wavPath)) resolve();
+        else reject(new Error((stderrTail.split('\n').filter(Boolean).pop()) || 'Speech synthesis failed.'));
       });
+      try { proc.stdin.write(say); proc.stdin.end(); } catch (err) { reject(new Error(err.message)); }
+    });
 
-      const baseName = `speech_${voiceId}`;
-      const outputPath = uniqueOutput(dir, baseName, fmt, true);
-
-      if (fmt === 'mp3') {
-        // Step 2 (mp3 only): ffmpeg wav -> mp3.
-        send('ai:tts:progress', { stage: 'encode', indeterminate: true });
-        await new Promise((resolve, reject) => {
-          const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', wavPath, '-c:a', 'libmp3lame', '-q:a', '2', outputPath];
-          execFile(ffmpegPath.ffmpeg, args, { windowsHide: true }, (err, _o, stderr) => {
-            if (err) reject(new Error((String(stderr || err.message).split('\n').filter(Boolean).pop()) || 'MP3 encode failed.'));
-            else resolve();
-          });
+    // The preview file the renderer will play (and later copy on save).
+    let tempPath = wavPath;
+    if (fmt === 'mp3') {
+      // Step 2 (mp3 only): ffmpeg wav -> mp3, then drop the intermediate wav.
+      send('ai:tts:progress', { stage: 'encode', indeterminate: true });
+      const mp3Path = path.join(tmpDir, `tts_${Date.now()}.mp3`);
+      await new Promise((resolve, reject) => {
+        const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', wavPath, '-c:a', 'libmp3lame', '-q:a', '2', mp3Path];
+        execFile(ffmpegPath.ffmpeg, args, { windowsHide: true }, (err, _o, stderr) => {
+          if (err) reject(new Error((String(stderr || err.message).split('\n').filter(Boolean).pop()) || 'MP3 encode failed.'));
+          else resolve();
         });
-      } else {
-        fs.copyFileSync(wavPath, outputPath);
-      }
-
-      let outSize = 0; try { outSize = fs.statSync(outputPath).size; } catch { /* */ }
-      send('ai:tts:progress', { stage: 'done', percent: 100 });
-      return { outputPath, outSize };
-    } finally {
+      });
       try { fs.unlinkSync(wavPath); } catch { /* */ }
+      tempPath = mp3Path;
     }
+
+    send('ai:tts:progress', { stage: 'done', percent: 100 });
+    return { tempPath, format: fmt };
+  });
+
+  // Download: copy a previewed temp file to the chosen output dir as a unique
+  // MTB_speech file (resolveOutputDir + uniqueOutput, same as other tools).
+  ipcMain.handle('ai:tts:save', async (_e, { tempPath, format, outputDir }) => {
+    if (!tempPath || !fs.existsSync(tempPath)) throw new Error('No speech to save — synthesize first.');
+    const fmt = (format === 'mp3') ? 'mp3' : 'wav';
+    const dir = resolveOutputDir({ outputDir }, app.getPath('downloads'));
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
+    const out = uniqueOutput(dir, 'speech', fmt, true);
+    fs.copyFileSync(tempPath, out);
+    let outSize = 0; try { outSize = fs.statSync(out).size; } catch { /* */ }
+    return { outputPath: out, outSize };
   });
 }
 
-module.exports = { registerIpc, cleanupFpsTemp };
+module.exports = { registerIpc, cleanupFpsTemp, cleanupTtsTemp };

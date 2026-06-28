@@ -3060,16 +3060,37 @@ function renderAiModels(status) {
   if (!host) return;
   const features = status && typeof status === 'object' ? Object.keys(status) : [];
   if (!features.length) { host.innerHTML = '<div class="set-note">No models available.</div>'; return; }
+  // Each feature is a collapsible section (collapsed by default) so the page
+  // isn't one long list. The header shows the count + how many are installed.
   host.innerHTML = features.map((feature) => {
     const list = status[feature] || [];
     if (!list.length) return '';
     const label = AI_FEATURE_LABELS[feature] || feature;
-    return `<div class="ai-feature">
-      <h4 class="ai-feature-h">${mtbEsc(label)}</h4>
-      ${list.map((m) => aiModelRow(feature, m)).join('')}
+    const inst = list.filter((m) => m.installed).length;
+    return `<div class="ai-feature" data-feature="${feature}">
+      <button type="button" class="ai-feature-h" data-role="ai-sec-head" aria-expanded="false">
+        <span class="ai-feature-label">${mtbEsc(label)}</span>
+        <span class="ai-feature-sum">${inst}/${list.length} installed</span>
+        <span class="ai-feature-chev">${icon('chevron')}</span>
+      </button>
+      <div class="ai-feature-body" data-role="ai-sec-body">
+        ${list.map((m) => aiModelRow(feature, m)).join('')}
+      </div>
     </div>`;
   }).join('');
+  wireAiFeatureHeads();
   wireAiModelRows();
+}
+// Collapse/expand each feature section. Sections start collapsed.
+function wireAiFeatureHeads() {
+  document.querySelectorAll('#aiModels .ai-feature').forEach((sec) => {
+    const head = sec.querySelector('[data-role="ai-sec-head"]');
+    if (!head || head._wired) return; head._wired = true;
+    head.addEventListener('click', () => {
+      const open = sec.classList.toggle('open');
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  });
 }
 // Wire each row's download/remove button + keep references for progress updates.
 function wireAiModelRows() {
@@ -3116,6 +3137,15 @@ function setAiRowInstalled(row, installed) {
   btn.disabled = false;
   btn.textContent = installed ? 'remove' : 'download';
   btn.className = 'act-btn' + (installed ? ' danger' : '');
+  updateAiFeatureSummary(row.closest('.ai-feature'));
+}
+// Refresh a section header's "N/M installed" count from its current rows.
+function updateAiFeatureSummary(sec) {
+  if (!sec) return;
+  const rows = sec.querySelectorAll('.ai-row');
+  const inst = sec.querySelectorAll('.ai-row[data-installed="1"]').length;
+  const sum = sec.querySelector('.ai-feature-sum');
+  if (sum) sum.textContent = `${inst}/${rows.length} installed`;
 }
 
 function settingsHtml(cat, s) {
@@ -3657,7 +3687,16 @@ function wireTranscribe() {
 // Lazy-wired on first open. Voice dropdown is filled from window.api.aimodels.list()
 // showing only INSTALLED tts voices; if none, a notice links to the model manager.
 // Generation runs on-device (works offline); only voice downloads need the network.
-const ttsState = { wired: false };
+const ttsState = { wired: false, tempPath: null, format: null };
+// Reset the inline preview player + download UI (called before a new synth and
+// when (re)opening the tool).
+function ttsResetPreview() {
+  ttsState.tempPath = null; ttsState.format = null;
+  const audio = $('ttsAudio');
+  if (audio) { try { audio.pause(); } catch { /* */ } audio.removeAttribute('src'); try { audio.load(); } catch { /* */ } audio.classList.add('hidden'); }
+  const foot = $('ttsPreviewFoot'); if (foot) foot.classList.add('hidden');
+  const result = $('ttsResult'); if (result) result.classList.add('hidden');
+}
 async function openTts() {
   hideAll(); state.section = 'tools'; state.ws = null;
   state.currentTool = { id: 'tts', label: 'Text to Speech' }; updateFavBtn();
@@ -3668,6 +3707,7 @@ async function openTts() {
   enhanceSelects($('ttsPanel'));
   const engineOk = !state.caps || state.caps.hasPiper !== false;
   $('ttsNoEngine').classList.toggle('hidden', engineOk);
+  ttsResetPreview();
   await ttsRefreshVoices();
 }
 async function ttsRefreshVoices() {
@@ -3710,26 +3750,50 @@ function wireTts() {
   // The "no voice" notice is a shortcut to the model manager.
   const ttsNotice = $('ttsNoModel');
   if (ttsNotice) { ttsNotice.classList.add('clickable'); ttsNotice.addEventListener('click', () => openSettings('localai')); }
+  // Synthesize → preview. The file is written to a temp dir; we play it inline
+  // and reveal Download (which copies it to the output folder).
   $('ttsRun').addEventListener('click', async () => {
     const text = $('ttsText').value.trim(); if (!text) return;
     const voiceId = $('ttsVoice').value; if (!voiceId) return;
     const format = $('ttsFormat').value || 'wav';
+    // Re-synthesizing replaces the previous temp + resets the player.
+    ttsResetPreview();
     $('ttsRun').disabled = true;
     $('ttsProgress').classList.remove('hidden'); $('ttsBar').classList.add('indet');
     $('ttsStatus').textContent = 'Synthesizing speech…'; $('ttsStatus').className = 'fr-status'; $('ttsStatus').onclick = null;
-    aiResultDeleteHide('ttsStatus');
     try {
-      const res = await window.api.aiTts({ text, voiceId, format, outputDir: state.outputDir });
+      const res = await window.api.aiTts({ text, voiceId, format });
+      ttsState.tempPath = res.tempPath; ttsState.format = res.format || format;
       $('ttsBar').classList.remove('indet'); $('ttsBar').style.width = '100%';
-      $('ttsStatus').textContent = `Saved (${fmtBytes(res.outSize)}) — click to open`; $('ttsStatus').className = 'fr-status done';
-      $('ttsStatus').onclick = () => window.api.showItem(res.outputPath);
-      aiResultDelete('ttsStatus', res.outputPath);
-      toast('Speech ready', { path: res.outputPath });
-      try { addRecent({ path: res.outputPath }); } catch { /* */ }
+      $('ttsStatus').textContent = 'Preview ready — listen, then download'; $('ttsStatus').className = 'fr-status done';
+      const audio = $('ttsAudio');
+      audio.src = 'file:///' + res.tempPath.replace(/\\/g, '/') + '?t=' + Date.now();
+      audio.classList.remove('hidden');
+      try { audio.load(); } catch { /* */ }
+      $('ttsPreviewFoot').classList.remove('hidden');
     } catch (e) {
       $('ttsBar').classList.remove('indet');
       $('ttsStatus').textContent = 'Error: ' + ((e && e.message) || e); $('ttsStatus').className = 'fr-status error';
     } finally { ttsUpdateRun(); }
+  });
+  // Download → copy the previewed temp file to the output folder.
+  $('ttsDownload').addEventListener('click', async () => {
+    if (!ttsState.tempPath) return;
+    const btn = $('ttsDownload'); btn.disabled = true;
+    try {
+      const res = await window.api.aiTtsSave({ tempPath: ttsState.tempPath, format: ttsState.format, outputDir: state.outputDir });
+      const result = $('ttsResult'); const txt = $('ttsResultText');
+      result.classList.remove('hidden');
+      txt.textContent = `Saved (${fmtBytes(res.outSize)}) — click to open`; txt.className = 'fr-status done';
+      txt.onclick = () => window.api.showItem(res.outputPath);
+      aiResultDelete('ttsResultText', res.outputPath);
+      toast('Speech saved', { path: res.outputPath });
+      try { addRecent({ path: res.outputPath }); } catch { /* */ }
+    } catch (e) {
+      const result = $('ttsResult'); const txt = $('ttsResultText');
+      result.classList.remove('hidden');
+      txt.textContent = 'Error: ' + ((e && e.message) || e); txt.className = 'fr-status error'; txt.onclick = null;
+    } finally { btn.disabled = false; }
   });
 }
 
@@ -4171,13 +4235,28 @@ function startPixelCanvas() {
 
 // ---------- audio player (profile) ----------
 // Playlist model — add more tracks here later; the player handles any length.
-const PLAYLIST = [
-  { src: '../songs/song.mp3', title: 'You Are in My System', cover: '../songs/cover.jpg' },
+// Fallback used only if songsList() returns empty or errors.
+let PLAYLIST = [
+  { src: '../songs/song.mp3', title: 'You Are in My System', artist: '', cover: '../songs/cover.jpg' },
 ];
 // Exposed so openProfile() can re-tint the player for the current theme when About opens.
 let retintPlayer = () => {};
-function wireAudioPlayer() {
+async function wireAudioPlayer() {
   const a = $('apAudio'); if (!a) return;
+
+  // Build the playlist from src/songs (embedded title/artist/cover via ffprobe/ffmpeg).
+  // On empty/error, keep the hardcoded fallback so the player still works.
+  try {
+    const songs = await window.api.songsList();
+    if (Array.isArray(songs) && songs.length) {
+      PLAYLIST = songs.map((s) => ({
+        src: s.src,
+        title: s.title || 'Untitled',
+        artist: s.artist || '',
+        cover: s.cover || '../songs/cover.jpg',
+      }));
+    }
+  } catch { /* keep fallback PLAYLIST */ }
   const fmt = (s) => { s = s || 0; const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, '0')}`; };
   let current = 0;
   let fadeRaf = 0;            // in-flight fade handle
@@ -4214,7 +4293,7 @@ function wireAudioPlayer() {
     endFading = false;
     cancelAnimationFrame(fadeRaf);
     $('apCover').src = tr.cover;
-    $('apTitle').textContent = tr.title;
+    $('apTitle').textContent = tr.artist ? `${tr.title} — ${tr.artist}` : tr.title;
     a.src = tr.src;
     tintFromCover(tr.cover);
     if (autoplay) {
@@ -4382,7 +4461,7 @@ async function init() {
   $('homeBtn').addEventListener('click', showHome);
   $('profileBtn').addEventListener('click', openProfile);
   $('settingsBtn').addEventListener('click', () => openSettings('appearance'));
-  document.querySelectorAll('#homeView .home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else if (c.dataset.tool === 'photofx') { state.backTo = 'home'; openPhotoEffects(); } else if (c.dataset.tool === 'ai') { state.backTo = 'home'; openAiHub(); } else if (c.dataset.tool === 'spotify') { state.backTo = 'home'; openSpotify(); } else showSection(c.dataset.section); }));
+  document.querySelectorAll('#homeView .home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else if (c.dataset.tool === 'ai') { state.backTo = 'home'; openAiHub(); } else if (c.dataset.tool === 'spotify') { state.backTo = 'home'; openSpotify(); } else showSection(c.dataset.section); }));
   wireTitlebar(); wireStretch(); wireMetaEditor();
   $('settingsClose').addEventListener('click', () => $('settingsModal').classList.add('hidden'));
   $('settingsModal').addEventListener('click', (e) => { if (e.target === $('settingsModal')) $('settingsModal').classList.add('hidden'); });

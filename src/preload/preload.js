@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld('api', {
   spotifyCancel: () => ipcRenderer.invoke('spotify:cancel'),
   onSpotifyProgress: (cb) => ipcRenderer.on('spotify:progress', (_e, d) => cb(d)),
 
+  // About audio player: list bundled songs (with embedded metadata + cover art)
+  songsList: () => ipcRenderer.invoke('songs:list'),
+
   // AI Model Manager (Settings → local ai)
   aimodels: {
     list: () => ipcRenderer.invoke('aimodel:list'),
@@ -66,6 +69,7 @@ contextBridge.exposeInMainWorld('api', {
   aiUpscale: (opts) => ipcRenderer.invoke('ai:upscale', opts),
   aiRemoveBg: (opts) => ipcRenderer.invoke('ai:removebg', opts),
   aiTts: (opts) => ipcRenderer.invoke('ai:tts', opts),
+  aiTtsSave: (opts) => ipcRenderer.invoke('ai:tts:save', opts),
   onAiTranscribeProgress: (cb) => ipcRenderer.on('ai:transcribe:progress', (_e, d) => cb(d)),
   onAiUpscaleProgress: (cb) => ipcRenderer.on('ai:upscale:progress', (_e, d) => cb(d)),
   onAiTtsProgress: (cb) => ipcRenderer.on('ai:tts:progress', (_e, d) => cb(d)),

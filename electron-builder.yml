@@ -16,6 +16,9 @@ files:
 # the asar archive — unpack it so the AI background-removal tool works packaged.
 asarUnpack:
   - "**/node_modules/onnxruntime-node/**"
+  # ffprobe/ffmpeg are external processes that can't read inside the asar — unpack
+  # src/songs so the About player can read embedded metadata/cover art if present.
+  - "src/songs/**"
 
 # Bundle ffmpeg/ffprobe so the installer is fully self-contained.
 # These land in <app>/resources/bin and are resolved by ffmpegPath.js.
