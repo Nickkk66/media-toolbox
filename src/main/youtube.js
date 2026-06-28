@@ -65,7 +65,11 @@ function download(opts, onProgress) {
   } else if (mode === 'transcription') {
     // Download captions / transcript as .srt (manual subs, else auto-generated).
     args.push('--skip-download', '--write-subs', '--write-auto-subs',
-      '--sub-langs', 'en.*,en', '--convert-subs', 'srt', '--no-simulate');
+      '--sub-langs', 'en.*,en', '--convert-subs', 'srt', '--no-simulate',
+      // Be gentle so YouTube doesn't 429 the (many) caption requests, and don't let
+      // one failed track abort the whole job.
+      '--ignore-errors', '--no-abort-on-error',
+      '--sleep-subtitles', '2', '--extractor-retries', '3', '--retries', '5');
     // 'captions' = keep the .srt as-is; 'with'/'without' handled after download.
   } else if (mode === 'audio') {
     args.push('--no-simulate', '-x', '--audio-format', audioFormat || 'mp3');
@@ -136,11 +140,12 @@ function download(opts, onProgress) {
     proc.on('error', (err) => reject(new Error(`Failed to start yt-dlp: ${err.message}`)));
     proc.on('close', (code) => {
       if (canceled) return reject(new Error('canceled'));
-      if (code !== 0) return reject(new Error(`yt-dlp failed (code ${code})\n${stderrTail}`));
 
-      // Thumbnail-only: the --print line won't fire (--skip-download), so locate
-      // the newest image file written to outDir.
+      // yt-dlp can exit non-zero (e.g. a 429 on ONE caption track) while still
+      // having written a usable file. So locate the output FIRST and only treat a
+      // non-zero exit as fatal when nothing was produced.
       if (mode === 'thumbnail') {
+        // --skip-download means the --print line won't fire; find the newest image.
         if (!finalPath || !/\.(jpg|jpeg|png|webp)$/i.test(finalPath)) {
           try {
             const imgs = fs.readdirSync(outDir)
@@ -151,24 +156,17 @@ function download(opts, onProgress) {
             if (imgs) finalPath = imgs.p;
           } catch { /* */ }
         }
-        if (!finalPath) return reject(new Error('No thumbnail available for this video.'));
-        let tSize = 0;
-        try { tSize = fs.statSync(finalPath).size; } catch { /* */ }
-        return resolve({ outputPath: finalPath, outSize: tSize });
-      }
-
-      // Transcription: locate the .srt if not captured, and optionally strip timestamps.
-      if (mode === 'transcription') {
+      } else if (mode === 'transcription') {
         if (!finalPath || !/\.srt$/i.test(finalPath)) {
           try {
             const srt = fs.readdirSync(outDir).filter((f) => /\.srt$/i.test(f))
-              .map((f) => ({ f, t: fs.statSync(path.join(outDir, f)).mtimeMs }))
+              .map((f) => ({ p: path.join(outDir, f), t: fs.statSync(path.join(outDir, f)).mtimeMs }))
+              .filter((o) => o.t >= startedAt - 1000)
               .sort((a, b) => b.t - a.t)[0];
-            if (srt) finalPath = path.join(outDir, srt.f);
+            if (srt) finalPath = srt.p;
           } catch { /* */ }
         }
-        if (!finalPath) return reject(new Error('No captions/transcript available for this video.'));
-        if (subMode === 'without' && /\.srt$/i.test(finalPath)) {
+        if (finalPath && subMode === 'without' && /\.srt$/i.test(finalPath)) {
           finalPath = stripTimestamps(finalPath);
         }
       } else if (!finalPath || !fs.existsSync(finalPath)) {
@@ -183,9 +181,23 @@ function download(opts, onProgress) {
           if (cand) finalPath = cand.p;
         } catch { /* */ }
       }
-      let outSize = 0;
-      try { if (finalPath) outSize = fs.statSync(finalPath).size; } catch { /* ignore */ }
-      return resolve({ outputPath: finalPath, outSize });
+
+      // Got a usable file → success, even if the exit code was non-zero.
+      if (finalPath && fs.existsSync(finalPath)) {
+        let outSize = 0;
+        try { outSize = fs.statSync(finalPath).size; } catch { /* */ }
+        return resolve({ outputPath: finalPath, outSize });
+      }
+
+      // Nothing produced → a helpful error (rate-limit gets a friendly message).
+      if (/429|Too Many Requests/i.test(stderrTail)) {
+        return reject(new Error(mode === 'transcription'
+          ? 'YouTube rate-limited the caption requests (HTTP 429). Wait a few minutes and try again — or download the video and use the Subtitle / Transcript Extractor tool (runs on-device, no rate limits).'
+          : 'YouTube rate-limited this request (HTTP 429). Wait a few minutes and try again.'));
+      }
+      if (mode === 'transcription') return reject(new Error('No captions/transcript available for this video.'));
+      if (mode === 'thumbnail') return reject(new Error('No thumbnail available for this video.'));
+      return reject(new Error(`yt-dlp failed (code ${code})\n${(stderrTail || '').split('\n').slice(-3).join('\n')}`));
     });
   });
 
