@@ -85,7 +85,7 @@ function customSelect(sel) {
 function enhanceSelects(root) { (root || document).querySelectorAll('select:not([data-cs])').forEach(customSelect); }
 function setHero(title, sub) { $('heroTitle').textContent = title; $('heroSub').textContent = sub; }
 
-const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'aiHubPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel', 'ttsPanel'];
+const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'pbPanel', 'aiHubPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel', 'ttsPanel'];
 function hideAll() {
   PANELS.forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
   document.body.classList.remove('on-profile');
@@ -219,6 +219,7 @@ function openItem(item, kind) {
   if (item.engine === 'metaedit') return openMetaEditor();
   if (item.engine === 'batchrename') return openBatchRename();
   if (item.engine === 'photofx') return openPhotoEffects();
+  if (item.engine === 'privacyblur') return openPrivacyBlur();
   if (item.engine === 'transcribe') return openTranscribe();
   if (item.engine === 'upscaleai') return openUpscaleAi();
   if (item.engine === 'removebg') return openRemoveBg();
@@ -1296,6 +1297,452 @@ function fxSave() {
     $('fxStatus').textContent = 'Saved PNG';
   }
   toast('Photo effects saved');
+}
+
+// ========== Privacy Blur — live two-pane canvas editor ==========
+// Source image on the left (draw rectangles / paint a brush mask); the right
+// pane is a live OUTPUT preview rebuilt from an ordered list of actions. Each
+// action carries its own effect type + radius, so undo/redo simply pop/restore
+// from the list and re-render. All effects are client-side canvas work.
+const pbState = {
+  wired: false,
+  source: null,          // HTMLImageElement (full-res original)
+  name: '',
+  effect: 'blur',        // blur | pixelate | blackbox | dither
+  apply: 'areas',        // whole | areas
+  selMode: 'rect',       // rect | brush
+  radius: 14,
+  actions: [],           // committed actions (rectangles / brush strokes)
+  redo: [],              // popped actions available to redo
+  // transient drawing state
+  dragging: false, dragStart: null, dragCur: null,
+  painting: false, stroke: null,
+  // per-action effect cache so re-render of a static stack is cheap
+};
+let pbSrcCv = null, pbSrcCtx = null;   // left interactive canvas
+let pbOutCv = null, pbOutCtx = null;   // right preview canvas
+let pbBaseCv = null, pbBaseCtx = null; // offscreen full-res original
+let pbScale = 1;                       // displayed px → image px factor
+
+const PB_EFFECTS = [
+  ['blur', 'Blur'],
+  ['pixelate', 'Pixelate'],
+  ['blackbox', 'Black Box'],
+  ['dither', 'Dither / Mosaic'],
+];
+
+function openPrivacyBlur() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  state.currentTool = { id: 'privacy-blur', label: 'Privacy Blur' }; updateFavBtn();
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Privacy Blur';
+  setHero('Privacy Blur', 'Blur, pixelate, black-box or dither faces & private details — live, in-app');
+  $('pbPanel').classList.remove('hidden');
+  if (!pbState.wired) { wirePrivacyBlur(); pbState.wired = true; }
+  pbSyncControls();
+  pbRender();
+}
+
+function wirePrivacyBlur() {
+  pbSrcCv = $('pbSrc'); pbSrcCtx = pbSrcCv.getContext('2d', { willReadFrequently: true });
+  pbOutCv = $('pbOut'); pbOutCtx = pbOutCv.getContext('2d', { willReadFrequently: true });
+  pbBaseCv = document.createElement('canvas'); pbBaseCtx = pbBaseCv.getContext('2d', { willReadFrequently: true });
+
+  enhanceSelects($('pbPanel'));
+
+  $('pbLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
+    pbLoadImagePath(paths[0]);
+  });
+
+  $('pbEffect').addEventListener('change', (e) => { pbState.effect = e.target.value; pbRenderDebounced(); });
+  $('pbRadius').addEventListener('input', (e) => {
+    pbState.radius = parseInt(e.target.value, 10);
+    $('pbRadiusVal').textContent = pbState.radius;
+    pbDrawSource(); // keep brush-size cursor responsive
+    pbRenderDebounced();
+  });
+  $('pbRadius').addEventListener('change', pbRenderFlush);
+
+  // segmented: application mode
+  $('pbApply').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-val]'); if (!btn) return;
+    pbState.apply = btn.dataset.val;
+    pbSyncControls(); pbDrawSource(); pbRender();
+  });
+  // segmented: selection mode
+  $('pbSelMode').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-val]'); if (!btn) return;
+    pbState.selMode = btn.dataset.val;
+    pbSyncControls(); pbDrawSource();
+  });
+
+  $('pbUndo').addEventListener('click', pbUndo);
+  $('pbRedo').addEventListener('click', pbRedo);
+  $('pbClear').addEventListener('click', () => {
+    if (!pbState.actions.length) return;
+    pbState.actions = []; pbState.redo = [];
+    pbUpdateButtons(); pbDrawSource(); pbRender();
+  });
+
+  $('pbExport').addEventListener('click', pbExport);
+  $('pbDelete').addEventListener('click', pbDeleteResult);
+  $('pbFolder').addEventListener('click', () => { if (pbState.lastSaved) window.api.showItem(pbState.lastSaved); else window.api.openPath(pbState.lastDir || ''); });
+
+  // pointer interaction on the source canvas
+  pbSrcCv.addEventListener('mousedown', pbPointerDown);
+  window.addEventListener('mousemove', pbPointerMove);
+  window.addEventListener('mouseup', pbPointerUp);
+
+  // keyboard undo/redo — only while this panel is visible
+  document.addEventListener('keydown', (e) => {
+    if ($('pbPanel').classList.contains('hidden')) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    const z = e.key === 'z' || e.key === 'Z';
+    const y = e.key === 'y' || e.key === 'Y';
+    if ((e.ctrlKey || e.metaKey) && z && !e.shiftKey) { e.preventDefault(); pbUndo(); }
+    else if ((e.ctrlKey || e.metaKey) && (y || (z && e.shiftKey))) { e.preventDefault(); pbRedo(); }
+  });
+}
+
+function pbSyncControls() {
+  const eff = $('pbEffect');
+  if (eff && !eff.options.length) eff.innerHTML = PB_EFFECTS.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+  if (eff) { eff.value = pbState.effect; if (eff._csRender) eff._csRender(); }
+  const r = $('pbRadius'); if (r) { r.value = pbState.radius; $('pbRadiusVal').textContent = pbState.radius; }
+  pbSeg('pbApply', pbState.apply);
+  pbSeg('pbSelMode', pbState.selMode);
+  // selection mode controls only matter for "selected areas"
+  $('pbSelRow').classList.toggle('hidden', pbState.apply !== 'areas');
+  pbUpdateButtons();
+}
+function pbSeg(id, val) {
+  const seg = $(id); if (!seg) return;
+  seg.querySelectorAll('[data-val]').forEach((b) => b.classList.toggle('on', b.dataset.val === val));
+}
+function pbUpdateButtons() {
+  $('pbUndo').disabled = !pbState.actions.length;
+  $('pbRedo').disabled = !pbState.redo.length;
+  $('pbClear').disabled = !pbState.actions.length;
+  const ready = !!pbState.source;
+  $('pbExport').disabled = !ready;
+}
+
+function pbLoadImagePath(path) {
+  const img = new Image();
+  img.onload = () => {
+    pbState.source = img; pbState.name = baseName(path);
+    pbState.actions = []; pbState.redo = []; pbState.lastSaved = null;
+    pbBaseCv.width = img.naturalWidth; pbBaseCv.height = img.naturalHeight;
+    pbBaseCtx.drawImage(img, 0, 0);
+    $('pbName').textContent = pbState.name;
+    $('pbHint').classList.add('hidden');
+    $('pbResult').classList.add('hidden');
+    pbUpdateButtons();
+    pbRender();
+  };
+  img.src = 'file:///' + String(path).replace(/\\/g, '/');
+}
+
+// ----- layout: fit both canvases to a max display size -----
+function pbFit() {
+  const src = pbState.source; if (!src) return { w: 0, h: 0 };
+  const iw = src.naturalWidth, ih = src.naturalHeight;
+  const MAX = 460;
+  let w = iw, h = ih;
+  if (w > MAX || h > MAX) { const s = MAX / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+  pbScale = iw / w; // displayed → image
+  return { w, h };
+}
+
+// ----- left pane: original + selection overlay -----
+function pbDrawSource() {
+  if (!pbState.source) return;
+  const { w, h } = pbFit();
+  pbSrcCv.width = w; pbSrcCv.height = h;
+  pbSrcCtx.drawImage(pbState.source, 0, 0, w, h);
+  if (pbState.apply !== 'areas') {
+    // whole-image mode → shade the whole canvas to signal it
+    pbSrcCtx.fillStyle = 'rgba(0,113,187,0.10)';
+    pbSrcCtx.fillRect(0, 0, w, h);
+    return;
+  }
+  // committed actions
+  pbSrcCtx.save();
+  pbSrcCtx.strokeStyle = '#0071bb'; pbSrcCtx.lineWidth = 1;
+  pbSrcCtx.fillStyle = 'rgba(0,113,187,0.18)';
+  for (const a of pbState.actions) pbOverlayAction(pbSrcCtx, a);
+  // in-progress drag rectangle
+  if (pbState.dragging && pbState.dragStart && pbState.dragCur) {
+    const r = pbRectFrom(pbState.dragStart, pbState.dragCur);
+    pbSrcCtx.fillRect(r.x / pbScale, r.y / pbScale, r.w / pbScale, r.h / pbScale);
+    pbSrcCtx.strokeRect(r.x / pbScale, r.y / pbScale, r.w / pbScale, r.h / pbScale);
+  }
+  // in-progress brush stroke
+  if (pbState.painting && pbState.stroke) pbOverlayAction(pbSrcCtx, pbState.stroke);
+  pbSrcCtx.restore();
+}
+function pbOverlayAction(ctx, a) {
+  if (a.kind === 'rect') {
+    ctx.fillRect(a.x / pbScale, a.y / pbScale, a.w / pbScale, a.h / pbScale);
+    ctx.strokeRect(a.x / pbScale, a.y / pbScale, a.w / pbScale, a.h / pbScale);
+  } else if (a.kind === 'brush') {
+    ctx.beginPath();
+    for (const p of a.points) ctx.moveTo(p.x / pbScale + p.r / pbScale, p.y / pbScale), ctx.arc(p.x / pbScale, p.y / pbScale, p.r / pbScale, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function pbRectFrom(a, b) {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) };
+}
+function pbEvtPos(e) {
+  const rect = pbSrcCv.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (pbSrcCv.width / rect.width);
+  const y = (e.clientY - rect.top) * (pbSrcCv.height / rect.height);
+  return { x: x * pbScale, y: y * pbScale }; // store in IMAGE pixels
+}
+
+function pbPointerDown(e) {
+  if (!pbState.source || pbState.apply !== 'areas') return;
+  e.preventDefault();
+  const p = pbEvtPos(e);
+  if (pbState.selMode === 'rect') {
+    pbState.dragging = true; pbState.dragStart = p; pbState.dragCur = p;
+  } else {
+    pbState.painting = true;
+    const r = pbState.radius * pbScale; // brush radius in image px
+    pbState.stroke = { kind: 'brush', effect: pbState.effect, radius: pbState.radius, points: [{ x: p.x, y: p.y, r }] };
+    pbDrawSource();
+  }
+}
+function pbPointerMove(e) {
+  if (pbState.dragging) { pbState.dragCur = pbEvtPos(e); pbDrawSource(); }
+  else if (pbState.painting && pbState.stroke) {
+    const p = pbEvtPos(e); const r = pbState.radius * pbScale;
+    pbState.stroke.points.push({ x: p.x, y: p.y, r });
+    pbDrawSource(); pbRenderDebounced();
+  }
+}
+function pbPointerUp() {
+  if (pbState.dragging) {
+    pbState.dragging = false;
+    const r = pbRectFrom(pbState.dragStart, pbState.dragCur);
+    pbState.dragStart = pbState.dragCur = null;
+    if (r.w > 3 && r.h > 3) {
+      pbPush({ kind: 'rect', effect: pbState.effect, radius: pbState.radius, x: r.x, y: r.y, w: r.w, h: r.h });
+    } else { pbDrawSource(); }
+  } else if (pbState.painting) {
+    pbState.painting = false;
+    const stroke = pbState.stroke; pbState.stroke = null;
+    if (stroke && stroke.points.length) pbPush(stroke);
+    else pbDrawSource();
+  }
+}
+
+// ----- action stack / undo / redo -----
+function pbPush(action) {
+  pbState.actions.push(action);
+  pbState.redo = [];
+  pbUpdateButtons(); pbDrawSource(); pbRender();
+}
+function pbUndo() {
+  if (!pbState.actions.length) return;
+  pbState.redo.push(pbState.actions.pop());
+  pbUpdateButtons(); pbDrawSource(); pbRender();
+}
+function pbRedo() {
+  if (!pbState.redo.length) return;
+  pbState.actions.push(pbState.redo.pop());
+  pbUpdateButtons(); pbDrawSource(); pbRender();
+}
+
+// ----- debounced re-render of the heavy output pane -----
+let pbRenderTimer = null;
+function pbRenderDebounced() {
+  if (pbRenderTimer) clearTimeout(pbRenderTimer);
+  pbRenderTimer = setTimeout(() => { pbRenderTimer = null; pbRender(); }, 200);
+}
+function pbRenderFlush() { if (pbRenderTimer) { clearTimeout(pbRenderTimer); pbRenderTimer = null; } pbRender(); }
+
+// ----- OUTPUT: rebuild the full result from source + actions -----
+// Returns a full-resolution canvas with all effects applied.
+function pbComposite() {
+  const src = pbState.source; if (!src) return null;
+  const W = src.naturalWidth, H = src.naturalHeight;
+  const out = document.createElement('canvas'); out.width = W; out.height = H;
+  const octx = out.getContext('2d', { willReadFrequently: true });
+  octx.drawImage(pbBaseCv, 0, 0);
+
+  if (pbState.apply === 'whole') {
+    pbApplyEffectRegion(octx, 0, 0, W, H, pbState.effect, pbState.radius, null);
+    return out;
+  }
+  // selected areas → apply each action within its own region/mask
+  for (const a of pbState.actions) {
+    if (a.kind === 'rect') {
+      const x = Math.max(0, Math.round(a.x)), y = Math.max(0, Math.round(a.y));
+      const w = Math.min(W - x, Math.round(a.w)), h = Math.min(H - y, Math.round(a.h));
+      if (w <= 0 || h <= 0) continue;
+      pbApplyEffectRegion(octx, x, y, w, h, a.effect, a.radius, null);
+    } else if (a.kind === 'brush') {
+      // bounding box of the stroke, then apply effect masked to the painted discs
+      let minX = W, minY = H, maxX = 0, maxY = 0;
+      for (const p of a.points) {
+        minX = Math.min(minX, p.x - p.r); minY = Math.min(minY, p.y - p.r);
+        maxX = Math.max(maxX, p.x + p.r); maxY = Math.max(maxY, p.y + p.r);
+      }
+      const x = Math.max(0, Math.floor(minX)), y = Math.max(0, Math.floor(minY));
+      const w = Math.min(W - x, Math.ceil(maxX - x)), h = Math.min(H - y, Math.ceil(maxY - y));
+      if (w <= 0 || h <= 0) continue;
+      // build a mask canvas for the stroke discs in region-local coords
+      const mask = document.createElement('canvas'); mask.width = w; mask.height = h;
+      const mctx = mask.getContext('2d');
+      mctx.fillStyle = '#fff';
+      for (const p of a.points) { mctx.beginPath(); mctx.arc(p.x - x, p.y - y, p.r, 0, Math.PI * 2); mctx.fill(); }
+      pbApplyEffectRegion(octx, x, y, w, h, a.effect, a.radius, mask);
+    }
+  }
+  return out;
+}
+
+// Apply one effect to a sub-rectangle of octx; if mask is given, only the
+// white parts of the mask receive the effect (the rest keeps the original).
+function pbApplyEffectRegion(octx, x, y, w, h, effect, radius, mask) {
+  // grab the region, run the effect on a detached canvas, paint it back
+  const region = document.createElement('canvas'); region.width = w; region.height = h;
+  const rctx = region.getContext('2d', { willReadFrequently: true });
+  rctx.drawImage(octx.canvas, x, y, w, h, 0, 0, w, h);
+
+  if (effect === 'blur') pbBoxBlur(rctx, w, h, Math.max(1, radius));
+  else if (effect === 'pixelate') pbPixelate(rctx, w, h, Math.max(2, radius));
+  else if (effect === 'blackbox') { rctx.fillStyle = '#000'; rctx.fillRect(0, 0, w, h); }
+  else if (effect === 'dither') pbDitherMosaic(rctx, w, h, Math.max(2, radius));
+
+  if (mask) {
+    // keep only masked pixels of the processed region
+    rctx.globalCompositeOperation = 'destination-in';
+    rctx.drawImage(mask, 0, 0);
+    rctx.globalCompositeOperation = 'source-over';
+  }
+  octx.drawImage(region, x, y);
+}
+
+// box blur (separable, multi-pass → approximates gaussian / stack blur)
+function pbBoxBlur(ctx, w, h, radius) {
+  const passes = 3;
+  let img = ctx.getImageData(0, 0, w, h);
+  let src = img.data;
+  let tmp = new Uint8ClampedArray(src.length);
+  const r = Math.max(1, Math.round(radius));
+  for (let pass = 0; pass < passes; pass++) {
+    pbBoxBlurPass(src, tmp, w, h, r, true);   // horizontal
+    pbBoxBlurPass(tmp, src, w, h, r, false);  // vertical
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function pbBoxBlurPass(src, dst, w, h, r, horizontal) {
+  const len = (2 * r + 1);
+  if (horizontal) {
+    for (let y = 0; y < h; y++) {
+      let ti = y * w * 4;
+      let rs = 0, gs = 0, bs = 0, as = 0;
+      for (let i = -r; i <= r; i++) { const xi = Math.min(w - 1, Math.max(0, i)); const o = (y * w + xi) * 4; rs += src[o]; gs += src[o + 1]; bs += src[o + 2]; as += src[o + 3]; }
+      for (let x = 0; x < w; x++) {
+        dst[ti] = rs / len; dst[ti + 1] = gs / len; dst[ti + 2] = bs / len; dst[ti + 3] = as / len;
+        const xOut = Math.min(w - 1, Math.max(0, x - r)); const xIn = Math.min(w - 1, Math.max(0, x + r + 1));
+        const oOut = (y * w + xOut) * 4, oIn = (y * w + xIn) * 4;
+        rs += src[oIn] - src[oOut]; gs += src[oIn + 1] - src[oOut + 1]; bs += src[oIn + 2] - src[oOut + 2]; as += src[oIn + 3] - src[oOut + 3];
+        ti += 4;
+      }
+    }
+  } else {
+    for (let x = 0; x < w; x++) {
+      let ti = x * 4;
+      let rs = 0, gs = 0, bs = 0, as = 0;
+      for (let i = -r; i <= r; i++) { const yi = Math.min(h - 1, Math.max(0, i)); const o = (yi * w + x) * 4; rs += src[o]; gs += src[o + 1]; bs += src[o + 2]; as += src[o + 3]; }
+      for (let y = 0; y < h; y++) {
+        dst[ti] = rs / len; dst[ti + 1] = gs / len; dst[ti + 2] = bs / len; dst[ti + 3] = as / len;
+        const yOut = Math.min(h - 1, Math.max(0, y - r)); const yIn = Math.min(h - 1, Math.max(0, y + r + 1));
+        const oOut = (yOut * w + x) * 4, oIn = (yIn * w + x) * 4;
+        rs += src[oIn] - src[oOut]; gs += src[oIn + 1] - src[oOut + 1]; bs += src[oIn + 2] - src[oOut + 2]; as += src[oIn + 3] - src[oOut + 3];
+        ti += w * 4;
+      }
+    }
+  }
+}
+
+// pixelate: average NxN blocks (N ≈ radius)
+function pbPixelate(ctx, w, h, radius) {
+  const n = Math.max(2, Math.round(radius));
+  const img = ctx.getImageData(0, 0, w, h); const d = img.data;
+  for (let by = 0; by < h; by += n) {
+    for (let bx = 0; bx < w; bx += n) {
+      let r = 0, g = 0, b = 0, a = 0, c = 0;
+      const xe = Math.min(bx + n, w), ye = Math.min(by + n, h);
+      for (let y = by; y < ye; y++) for (let x = bx; x < xe; x++) { const o = (y * w + x) * 4; r += d[o]; g += d[o + 1]; b += d[o + 2]; a += d[o + 3]; c++; }
+      r /= c; g /= c; b /= c; a /= c;
+      for (let y = by; y < ye; y++) for (let x = bx; x < xe; x++) { const o = (y * w + x) * 4; d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = a; }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// dither / mosaic censor: coarse mosaic blocks + ordered-dither quantization
+const PB_BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+function pbDitherMosaic(ctx, w, h, radius) {
+  // first coarsen into blocks, then apply ordered dither to a small palette
+  const n = Math.max(2, Math.round(radius));
+  pbPixelate(ctx, w, h, n);
+  const img = ctx.getImageData(0, 0, w, h); const d = img.data;
+  const levels = 3; // posterize steps per channel → blocky censor look
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      const t = (PB_BAYER[y % 4][x % 4] / 16 - 0.5) * (255 / levels);
+      for (let k = 0; k < 3; k++) {
+        let v = d[o + k] + t;
+        v = Math.round(v / (255 / levels)) * (255 / levels);
+        d[o + k] = Math.max(0, Math.min(255, v));
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// ----- master render: left overlay + right output preview -----
+function pbRender() {
+  if (!pbState.source) {
+    if (pbSrcCv) { pbSrcCv.width = pbSrcCv.height = 0; }
+    if (pbOutCv) { pbOutCv.width = pbOutCv.height = 0; }
+    return;
+  }
+  pbDrawSource();
+  const full = pbComposite();
+  const { w, h } = pbFit();
+  pbOutCv.width = w; pbOutCv.height = h;
+  pbOutCtx.imageSmoothingEnabled = true;
+  pbOutCtx.drawImage(full, 0, 0, w, h);
+  pbState._full = full;
+  $('pbStatus').textContent = `${full.width}×${full.height} · ${pbState.apply === 'whole' ? 'whole image' : pbState.actions.length + ' area(s)'}`;
+}
+
+function pbExport() {
+  if (!pbState.source) return;
+  const full = pbComposite(); if (!full) return;
+  const fname = 'MTB_' + (pbState.name || 'image').replace(/\.[^.]+$/, '') + '_blur.png';
+  const a = document.createElement('a');
+  a.href = full.toDataURL('image/png'); a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  pbState.lastSaved = null; // client-side download → revealed via Downloads folder
+  $('pbResult').classList.remove('hidden');
+  $('pbResultName').textContent = fname + ' — saved to Downloads';
+  toast('Privacy Blur saved');
+}
+function pbDeleteResult() {
+  $('pbResult').classList.add('hidden');
+  $('pbResultName').textContent = '';
 }
 
 // ---------- tool options bar (for op tools) ----------
@@ -2436,8 +2883,36 @@ const SETTINGS_CATS = [
   ['performance', 'performance', 'tools'],
   ['localai', 'local ai', 'tools'],
   ['downloads', 'downloads', 'download'],
+  ['updates', 'updates', 'download'],
   ['advanced', 'advanced', 'convert'],
 ];
+// ---------- planned / future updates list (persisted) ----------
+// Persisted in localStorage as an array of {text,done}; mirrors favorites/recents.
+const PLANNED_KEY = 'mtb_planned';
+function loadPlanned() { try { return JSON.parse(localStorage.getItem(PLANNED_KEY)) || []; } catch { return []; } }
+function savePlanned(arr) { try { localStorage.setItem(PLANNED_KEY, JSON.stringify((arr || []).slice(0, 200))); } catch { /* */ } }
+function addPlanned(text) {
+  const t = String(text || '').trim();
+  if (!t) return loadPlanned();
+  const arr = loadPlanned();
+  arr.push({ text: t, done: false });
+  savePlanned(arr);
+  return arr;
+}
+function removePlanned(i) { const arr = loadPlanned(); arr.splice(i, 1); savePlanned(arr); return arr; }
+function togglePlanned(i) { const arr = loadPlanned(); if (arr[i]) arr[i].done = !arr[i].done; savePlanned(arr); return arr; }
+function plannedListHtml(arr) {
+  if (!arr.length) return '<div class="set-note">no planned updates yet — add one below.</div>';
+  return arr.map((it, i) => `<div class="planned-row ${it.done ? 'done' : ''}" data-i="${i}">
+    <label class="planned-check"><input type="checkbox" data-role="done" ${it.done ? 'checked' : ''} /><span></span></label>
+    <span class="planned-text">${mtbEsc(it.text)}</span>
+    <button class="planned-x" data-role="remove" title="remove" aria-label="remove">${icon('x')}</button>
+  </div>`).join('');
+}
+function renderPlannedList() {
+  const host = $('plannedList');
+  if (host) host.innerHTML = plannedListHtml(loadPlanned());
+}
 // ---------- reusable component builders (HTML-string helpers) ----------
 function seg(name, cur, opts, wrap) {
   return `<div class="seg ${wrap ? 'seg-wrap' : ''}" data-seg="${name}">${opts.map(([v, l]) => `<button class="seg-btn ${cur === v ? 'on' : ''}" data-v="${v}">${l}</button>`).join('')}</div>`;
@@ -2589,6 +3064,24 @@ function settingsHtml(cat, s) {
     <div class="perf-list">${dlRadios(s.downloadLocation, s.customDownloadDir)}</div>
     <p class="set-note">where converted, compressed, and downloaded files are saved by default. you can still override the output folder per job.</p>`;
 
+  if (cat === 'updates') {
+    const ver = s.appVersion || (state.caps && state.caps.appVersion) || '1.0.0';
+    const hasCheck = typeof checkForUpdate === 'function';
+    return `
+    <h3 class="set-h">current version</h3>
+    <div class="set-note">media toolbox v${mtbEsc(ver)}</div>
+    ${hasCheck
+      ? actionRow([['setCheckUpdate', 'check for updates', 'download']]) + '<p class="set-note">checks GitHub for a newer release. you\'ll be notified in-app if one is available.</p>'
+      : '<p class="set-note">you\'re running the latest bundled version.</p>'}
+    <h3 class="set-h">planned / future updates</h3>
+    <p class="set-note">jot down features and improvements you want to build. saved on this device.</p>
+    <div class="planned-add">
+      <input type="text" id="plannedInput" class="planned-input" placeholder="add a planned update…" maxlength="200" />
+      <button class="act-btn" id="plannedAdd"><span class="ic">${icon('plus')}</span>add</button>
+    </div>
+    <div class="planned-list" id="plannedList">${plannedListHtml(loadPlanned())}</div>`;
+  }
+
   if (cat === 'advanced') return `
     <div class="set-advanced">
     <h3 class="set-h">network</h3>
@@ -2674,6 +3167,37 @@ function wireSettingsCat(cat, s) {
   } else if (cat === 'downloads') {
     document.querySelectorAll('#settingsContent input[name="dl"]').forEach((r) => r.addEventListener('change', () => persist({ downloadLocation: r.value })));
     const pick = $('dlPick'); if (pick) pick.addEventListener('click', async (e) => { e.preventDefault(); const d = await window.api.pickOutputDir(); if (d) { state._customDir = d; $('dlCustomDesc').textContent = d; const r = document.querySelector('#settingsContent input[name="dl"][value="custom"]'); if (r) r.checked = true; persist({ downloadLocation: 'custom', customDownloadDir: d }); } });
+  } else if (cat === 'updates') {
+    const chk = $('setCheckUpdate');
+    if (chk) chk.addEventListener('click', async () => {
+      if (isOffline()) { toast("You're offline — connect to the internet to check for updates.", { kind: 'error' }); return; }
+      chk.disabled = true;
+      try { await checkForUpdate(); toast('Checked for updates'); }
+      finally { chk.disabled = false; }
+    });
+    const input = $('plannedInput');
+    const addBtn = $('plannedAdd');
+    const commitAdd = () => {
+      if (!input) return;
+      if (!input.value.trim()) return;
+      addPlanned(input.value);
+      input.value = '';
+      renderPlannedList();
+      input.focus();
+    };
+    if (addBtn) addBtn.addEventListener('click', commitAdd);
+    if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitAdd(); } });
+    const list = $('plannedList');
+    if (list) list.addEventListener('click', (e) => {
+      const row = e.target.closest('.planned-row'); if (!row) return;
+      const i = Number(row.dataset.i);
+      if (e.target.closest('[data-role="remove"]')) { removePlanned(i); renderPlannedList(); }
+    });
+    if (list) list.addEventListener('change', (e) => {
+      if (!e.target.matches('[data-role="done"]')) return;
+      const row = e.target.closest('.planned-row'); if (!row) return;
+      togglePlanned(Number(row.dataset.i)); renderPlannedList();
+    });
   } else if (cat === 'advanced') {
     // Manual "offline mode" toggle — app-level only; immediately re-apply the offline UI.
     wireToggle('setOffline', 'offlineMode', () => applyOnlineState());

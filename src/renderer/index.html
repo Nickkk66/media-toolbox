@@ -302,6 +302,87 @@
         </div>
       </div>
 
+      <!-- Privacy Blur — live two-pane canvas editor -->
+      <div id="pbPanel" class="panel hidden">
+        <div class="pb-wrap">
+          <div class="pb-side">
+
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">input</div>
+              <div class="fx-pnl-b">
+                <button id="pbLoad" class="fx-btn fx-btn-wide">choose image</button>
+                <span class="fx-input-name" id="pbName"></span>
+              </div>
+            </div>
+
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">effect</div>
+              <div class="fx-pnl-b">
+                <label class="fx-field"><span>effect type</span><select id="pbEffect"></select></label>
+                <div class="fx-field"><span>apply to</span>
+                  <div id="pbApply" class="fx-seg">
+                    <button type="button" class="fx-seg-btn" data-val="whole">whole image</button>
+                    <button type="button" class="fx-seg-btn" data-val="areas">selected areas</button>
+                  </div>
+                </div>
+                <div class="fx-field hidden" id="pbSelRow"><span>selection</span>
+                  <div id="pbSelMode" class="fx-seg">
+                    <button type="button" class="fx-seg-btn" data-val="rect">rectangle</button>
+                    <button type="button" class="fx-seg-btn" data-val="brush">brush</button>
+                  </div>
+                </div>
+                <label class="fx-field"><span>blur radius / strength <b id="pbRadiusVal">14</b></span>
+                  <input id="pbRadius" class="perf-range" type="range" min="2" max="60" value="14" /></label>
+              </div>
+            </div>
+
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">history</div>
+              <div class="fx-pnl-b">
+                <div class="pb-history">
+                  <button id="pbUndo" class="fx-btn" title="undo (Ctrl+Z)" disabled>‹ back</button>
+                  <button id="pbRedo" class="fx-btn" title="redo (Ctrl+Y)" disabled>forward ›</button>
+                  <button id="pbClear" class="fx-btn" disabled>clear</button>
+                </div>
+                <p class="hint">Draw boxes or paint a mask on the left. Ctrl+Z / Ctrl+Y to undo / redo.</p>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="pb-main">
+            <div class="pb-panes">
+              <div class="pb-pane">
+                <div class="pb-pane-h">source — draw selections</div>
+                <div class="pb-stage">
+                  <div id="pbHint" class="fx-hint">Choose an image to begin.</div>
+                  <canvas id="pbSrc" class="pb-canvas"></canvas>
+                </div>
+              </div>
+              <div class="pb-pane">
+                <div class="pb-pane-h">output — live preview</div>
+                <div class="pb-stage">
+                  <canvas id="pbOut" class="pb-canvas"></canvas>
+                </div>
+              </div>
+            </div>
+            <div class="fx-bar">
+              <span class="muted" id="pbStatus">idle</span>
+              <div class="fx-export">
+                <button id="pbExport" class="btn primary" disabled>Output / Export <span class="ic" data-icon="download"></span></button>
+              </div>
+            </div>
+            <div id="pbResult" class="pb-result hidden">
+              <span class="pb-result-name" id="pbResultName"></span>
+              <span class="pb-result-actions">
+                <button id="pbDelete" class="pb-ic-btn" title="discard result"><span class="ic" data-icon="trash"></span></button>
+                <button id="pbFolder" class="pb-ic-btn" title="open location"><span class="ic" data-icon="folder"></span></button>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- AI Tools hub (home for the local AI tools) -->
       <div id="aiHubPanel" class="panel hidden">
         <div class="home-grid ai-hub">
