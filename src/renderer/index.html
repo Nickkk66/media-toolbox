@@ -38,9 +38,12 @@
       <div id="recentsBody" class="recents-body"></div>
     </div>
 
-    <div id="favsPanel" class="recents-panel favs-panel hidden">
-      <div class="recents-head"><span>saved tools</span></div>
-      <div id="favsBody" class="recents-body"></div>
+    <!-- Saved tools modal (styled like the Settings modal) -->
+    <div id="favsModal" class="modal-overlay hidden">
+      <div class="modal favs-modal">
+        <div class="modal-head"><h2>Saved tools</h2><button id="favsClose" class="modal-x"><span class="ic" data-icon="x"></span></button></div>
+        <div class="modal-body" id="favsBody"></div>
+      </div>
     </div>
 
     <header class="hero">
@@ -314,39 +317,42 @@
           <button id="trLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose video / audio</button>
           <span class="muted" id="trName"></span>
         </div>
-        <div class="ai-wrap">
-          <div class="ai-side">
-            <div id="trNoModel" class="ai-notice hidden">No transcription model — download one in Settings → Local AI.</div>
-            <label class="field"><span>Model</span><select id="trModel"></select></label>
-            <label class="field"><span>Language</span>
-              <select id="trLang">
-                <option value="auto">Auto-detect</option>
-                <option value="en">English</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-                <option value="it">Italian</option>
-                <option value="pt">Portuguese</option>
-                <option value="nl">Dutch</option>
-                <option value="ru">Russian</option>
-                <option value="zh">Chinese</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">Korean</option>
-                <option value="ar">Arabic</option>
-                <option value="hi">Hindi</option>
-              </select>
-            </label>
-            <div class="ai-fmt">
-              <span class="ai-fmt-label">Output formats</span>
-              <label class="ai-check"><input id="trFmtSrt" type="checkbox" checked/> <span>SRT (subtitles)</span></label>
-              <label class="ai-check"><input id="trFmtTxt" type="checkbox" checked/> <span>TXT (plain text)</span></label>
-              <label class="ai-check"><input id="trFmtVtt" type="checkbox"/> <span>VTT (web captions)</span></label>
+        <div id="trNoModel" class="ai-notice hidden">No transcription model — download one in Settings → Local AI.</div>
+        <!-- Landscape layout: controls spread across the width to cut vertical scroll. -->
+        <div class="tr-grid">
+          <label class="field"><span>Model</span><select id="trModel"></select></label>
+          <label class="field"><span>Language</span>
+            <select id="trLang">
+              <option value="auto">Auto-detect</option>
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="it">Italian</option>
+              <option value="pt">Portuguese</option>
+              <option value="nl">Dutch</option>
+              <option value="ru">Russian</option>
+              <option value="zh">Chinese</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="ar">Arabic</option>
+              <option value="hi">Hindi</option>
+            </select>
+          </label>
+          <div class="ai-fmt tr-fmt">
+            <span class="ai-fmt-label">Output formats</span>
+            <div class="tr-fmt-row">
+              <label class="ai-check"><input id="trFmtSrt" type="checkbox" checked/> <span>SRT</span></label>
+              <label class="ai-check"><input id="trFmtTxt" type="checkbox" checked/> <span>TXT</span></label>
+              <label class="ai-check"><input id="trFmtVtt" type="checkbox"/> <span>VTT</span></label>
             </div>
-            <p class="hint">Audio is extracted to 16 kHz mono, then transcribed locally on your machine. Larger models are more accurate but slower.</p>
-            <button id="trRun" class="btn primary big" disabled>Transcribe <span class="ic" data-icon="arrowRight"></span></button>
-            <div id="trProgress" class="yt-progress hidden"><div class="bar"><div id="trBar" class="bar-fill"></div></div><div id="trStatus" class="fr-status"></div></div>
           </div>
         </div>
+        <div class="tr-foot">
+          <p class="hint tr-hint">Audio is extracted to 16 kHz mono, then transcribed locally on your machine. Larger models are more accurate but slower.</p>
+          <button id="trRun" class="btn primary big" disabled>Transcribe <span class="ic" data-icon="arrowRight"></span></button>
+        </div>
+        <div id="trProgress" class="yt-progress hidden"><div class="bar"><div id="trBar" class="bar-fill"></div></div><div id="trStatus" class="fr-status"></div></div>
       </div>
 
       <!-- AI Image Upscaler (Real-ESRGAN) -->
@@ -435,11 +441,10 @@
             <div id="ytTitle" class="yt-title"></div>
             <div id="ytUploader" class="muted"></div>
             <div class="yt-options">
-              <label class="field"><span>Type</span><select id="ytMode"><option value="video">Video</option><option value="audio">Audio</option><option value="transcription">Transcription</option></select></label>
-              <label class="field"><span>Format</span><select id="ytSub"></select></label>
+              <label class="field"><span>Type</span><select id="ytMode"><option value="video">Video</option><option value="audio">Audio</option><option value="thumbnail">Thumbnail</option><option value="transcription">Transcription</option></select></label>
+              <label class="field" id="ytSubWrap"><span>Format</span><select id="ytSub"></select></label>
               <label class="field" id="ytQualityWrap"><span id="ytQualityLabel">Quality</span><select id="ytQuality"></select></label>
             </div>
-            <label class="check-inline" style="margin:4px 0"><input type="checkbox" id="ytThumb2" /> <span class="hint">also download the thumbnail</span></label>
             <div class="yt-actions"><button id="ytDownload" class="btn primary big">Download <span class="ic" data-icon="download"></span></button><button id="ytCancel" class="btn ghost hidden">Cancel</button></div>
             <div id="ytProgress" class="yt-progress hidden"><div class="bar"><div id="ytBar" class="bar-fill"></div></div><div id="ytStatus" class="fr-status"></div></div>
           </div>

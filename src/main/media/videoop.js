@@ -13,16 +13,35 @@ const extensions = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'flv', 'mpg', 'ts
 const outputFormats = [{ value: 'mp4', label: 'MP4' }, { value: 'mkv', label: 'MKV' }, { value: 'webm', label: 'WEBM' }];
 
 function defaultSettings() {
-  return { op: 'trim', outputFormat: 'mp4', start: '00:00:00', end: '', cropW: 0, cropH: 0, cropX: 0, cropY: 0, stretchW: 1080, stretchH: 1920, speed: 1, fps: 30, interpolate: false, smoothing: 10 };
+  return { op: 'trim', outputFormat: 'mp4', start: '00:00:00', end: '', cropW: 0, cropH: 0, cropX: 0, cropY: 0, stretchW: 1080, stretchH: 1920, speed: 1, fps: 30, interpolate: false, smoothing: 10, mblur: 4, regionXPct: 25, regionYPct: 25, regionWPct: 50, regionHPct: 50 };
 }
 function outExt(settings, inputPath) {
-  // Speed/fps/stabilize keep the source container by default so users don't
-  // get a surprise re-mux to mp4 (the option still lets them pick otherwise).
-  if (settings && ['speed', 'fps', 'stabilize'].includes(settings.op) && !settings.outputFormat) {
+  // Speed/fps/stabilize/motionblur/delogo keep the source container by default
+  // so users don't get a surprise re-mux to mp4 (the option still lets them pick).
+  if (settings && ['speed', 'fps', 'stabilize', 'motionblur', 'delogo'].includes(settings.op) && !settings.outputFormat) {
     const e = ((inputPath || '').split('.').pop() || 'mp4').toLowerCase();
     return e || 'mp4';
   }
   return (settings && settings.outputFormat) || 'mp4';
+}
+
+// Convert a percentage-based region (regionXPct/Y/W/H, 0–100, relative to the
+// source frame) into integer pixel x/y/w/h, clamped inside the frame. Used by
+// the region tools (delogo) so the renderer can keep coordinates resolution-
+// independent and the box stays valid regardless of source dimensions.
+function regionPx(settings, fw, fh) {
+  const W = Math.max(2, fw || 0), H = Math.max(2, fh || 0);
+  const clampPct = (v, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : d; };
+  const xp = clampPct(settings.regionXPct, 25), yp = clampPct(settings.regionYPct, 25);
+  const wp = clampPct(settings.regionWPct, 50), hp = clampPct(settings.regionHPct, 50);
+  let w = Math.max(2, Math.round(W * wp / 100));
+  let h = Math.max(2, Math.round(H * hp / 100));
+  let x = Math.round(W * xp / 100);
+  let y = Math.round(H * yp / 100);
+  if (x + w > W) x = Math.max(0, W - w);
+  if (y + h > H) y = Math.max(0, H - h);
+  if (w > W) w = W; if (h > H) h = H;
+  return { x, y, w, h };
 }
 
 // Build the audio `atempo` chain. atempo only accepts 0.5–2.0, so a factor
@@ -85,6 +104,29 @@ function build({ settings, meta, inputPath, outputPath, passlogPrefix }) {
     const w = Math.max(2, Number(settings.stretchW) || meta.video.width || 1080);
     const h = Math.max(2, Number(settings.stretchH) || meta.video.height || 1920);
     const vf = `scale=${w}:${h},setsar=1`;
+    const args = [...GLOBALS, '-i', inputPath, '-vf', vf, '-c:v', 'libx264', '-crf', '20', '-preset', 'medium', '-c:a', 'copy', '-movflags', '+faststart', outputPath];
+    return { binary: ffmpegPath.ffmpeg, passes: [args], twoPass: false, durationSec: meta.durationSec };
+  }
+  if (settings.op === 'motionblur') {
+    // Blend adjacent frames for a motion-blur / long-exposure look. tmix mixes
+    // the last N frames with equal weights — higher N = stronger smear.
+    const n = Math.min(16, Math.max(2, Number(settings.mblur) || 4));
+    const weights = Array(n).fill('1').join(' ');
+    const vf = `tmix=frames=${n}:weights=${weights}`;
+    const args = [...GLOBALS, '-i', inputPath, '-filter:v', vf, '-c:v', 'libx264', '-crf', '20', '-preset', 'medium', '-c:a', 'copy', '-movflags', '+faststart', outputPath];
+    return { binary: ffmpegPath.ffmpeg, passes: [args], twoPass: false, durationSec: meta.durationSec };
+  }
+  if (settings.op === 'delogo') {
+    // Remove a watermark/logo inside a rectangular region by interpolating from
+    // the surrounding pixels. Works best on small, semi-opaque logos.
+    const fw = (meta.video && meta.video.width) || 0, fh = (meta.video && meta.video.height) || 0;
+    const r = regionPx(settings, fw, fh);
+    // delogo needs the box strictly inside the frame (it samples a 1px border).
+    const x = Math.min(Math.max(1, r.x), Math.max(1, fw - r.w - 1));
+    const y = Math.min(Math.max(1, r.y), Math.max(1, fh - r.h - 1));
+    const w = Math.max(1, Math.min(r.w, fw - x - 1));
+    const h = Math.max(1, Math.min(r.h, fh - y - 1));
+    const vf = `delogo=x=${x}:y=${y}:w=${w}:h=${h}`;
     const args = [...GLOBALS, '-i', inputPath, '-vf', vf, '-c:v', 'libx264', '-crf', '20', '-preset', 'medium', '-c:a', 'copy', '-movflags', '+faststart', outputPath];
     return { binary: ffmpegPath.ffmpeg, passes: [args], twoPass: false, durationSec: meta.durationSec };
   }

@@ -1278,6 +1278,8 @@ function fxSave() {
 function renderToolOptions() {
   const bar = $('toolOptions');
   const ws = state.ws;
+  // Drop any stale region-preview hook from a previously open region tool.
+  state.refreshRegionPreview = null;
   if (!ws || (!ws.isOp)) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
   const op = ws.item.op; const b = ws.base;
   const field = (label, html) => `<label class="to-field"><span>${label}</span>${html}</label>`;
@@ -1299,6 +1301,10 @@ function renderToolOptions() {
   else if (op === 'rotate') html = field('Rotate by', `<select data-k="angle"><option value="90" ${b.angle == 90 ? 'selected' : ''}>90° CW</option><option value="180" ${b.angle == 180 ? 'selected' : ''}>180°</option><option value="270" ${b.angle == 270 ? 'selected' : ''}>270° CW</option></select>`);
   else if (op === 'unlock') html = field('Current password', `<input type="text" data-k="password" value="${b.password || ''}" placeholder="leave blank if none">`);
   else if (op === 'resize') html = field('Page size', `<select data-k="paper"><option value="a4" ${b.paper === 'a4' ? 'selected' : ''}>A4</option><option value="letter" ${b.paper === 'letter' ? 'selected' : ''}>Letter</option><option value="legal" ${b.paper === 'legal' ? 'selected' : ''}>Legal</option><option value="a3" ${b.paper === 'a3' ? 'selected' : ''}>A3</option></select>`);
+  else if (op === 'motionblur') html = field('Intensity', `<select data-k="mblur"><option value="2" ${b.mblur == 2 ? 'selected' : ''}>Subtle (2)</option><option value="4" ${b.mblur == 4 ? 'selected' : ''}>Medium (4)</option><option value="8" ${b.mblur == 8 ? 'selected' : ''}>Strong (8)</option><option value="16" ${b.mblur == 16 ? 'selected' : ''}>Max (16)</option></select>`);
+  else if (op === 'thumb') html = field('Timestamp (s or hh:mm:ss)', `<input type="text" data-k="time" value="${b.time || '00:00:01'}" placeholder="00:00:01">`);
+  else if (op === 'blur') html = regionFields(b, true) + regionPreviewHtml();
+  else if (op === 'delogo') html = regionFields(b, false) + regionPreviewHtml();
   else { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
   const note = op === 'crop' ? '<div class="hint" style="margin-top:10px">Common sizes — TikTok/Reels 1080×1920 · YouTube 1920×1080 · Square 1080×1080 · Story 1080×1920</div>' : '';
   bar.innerHTML = `<div class="to-title">Options</div><div class="to-fields">${html}</div>${note}`;
@@ -1307,7 +1313,103 @@ function renderToolOptions() {
     const k = el.dataset.k; b[k] = el.type === 'number' ? Number(el.value) : el.value;
     for (const e of ws.list.values()) e.settings[k] = b[k];
   }));
+  if (op === 'blur' || op === 'delogo') wireRegionUI(bar, ws, b);
   bar.classList.remove('hidden');
+}
+
+// ---------- region selector (Privacy Blur / Watermark Remover) ----------
+// Region is stored as percentages (regionXPct/Y/W/H) so it is resolution-
+// independent. A draggable/resizable box sits over a preview of the source
+// (image, or the first frame of a video); numeric % inputs are the fallback.
+function regionFields(b, withStrength) {
+  const f = (label, html) => `<label class="to-field"><span>${label}</span>${html}</label>`;
+  let h = '';
+  if (withStrength) h += f('Strength', `<select data-k="strength"><option value="light" ${b.strength === 'light' ? 'selected' : ''}>Light</option><option value="medium" ${b.strength === 'medium' ? 'selected' : ''}>Medium</option><option value="strong" ${b.strength === 'strong' ? 'selected' : ''}>Strong</option><option value="max" ${b.strength === 'max' ? 'selected' : ''}>Max</option></select>`);
+  h += f('X (%)', `<input type="number" data-k="regionXPct" min="0" max="100" value="${Math.round(b.regionXPct ?? 25)}">`);
+  h += f('Y (%)', `<input type="number" data-k="regionYPct" min="0" max="100" value="${Math.round(b.regionYPct ?? 25)}">`);
+  h += f('Width (%)', `<input type="number" data-k="regionWPct" min="1" max="100" value="${Math.round(b.regionWPct ?? 50)}">`);
+  h += f('Height (%)', `<input type="number" data-k="regionHPct" min="1" max="100" value="${Math.round(b.regionHPct ?? 50)}">`);
+  return h;
+}
+function regionPreviewHtml() {
+  return `<div class="region-wrap" id="regionWrap">
+      <div class="region-stage" id="regionStage">
+        <img id="regionImg" alt="" draggable="false">
+        <div class="region-box" id="regionBox"><span class="rb-h rb-br"></span></div>
+        <div class="region-empty" id="regionEmpty">Add a file to position the blur box — or use the X / Y / Width / Height fields above.</div>
+      </div>
+      <div class="hint" style="margin-top:8px">Drag inside the box to move it · drag the corner to resize. The region applies to the whole clip.</div>
+    </div>`;
+}
+function wireRegionUI(bar, ws, b) {
+  const stage = bar.querySelector('#regionStage');
+  const img = bar.querySelector('#regionImg');
+  const box = bar.querySelector('#regionBox');
+  const empty = bar.querySelector('#regionEmpty');
+  if (!stage || !img || !box) return;
+
+  const setBoxFromPct = () => {
+    box.style.left = (b.regionXPct ?? 25) + '%';
+    box.style.top = (b.regionYPct ?? 25) + '%';
+    box.style.width = (b.regionWPct ?? 50) + '%';
+    box.style.height = (b.regionHPct ?? 50) + '%';
+  };
+  const syncInputs = () => {
+    bar.querySelectorAll('[data-k^="region"]').forEach((el) => { el.value = Math.round(b[el.dataset.k] ?? 0); });
+  };
+  const apply = () => { for (const e of ws.list.values()) { e.settings.regionXPct = b.regionXPct; e.settings.regionYPct = b.regionYPct; e.settings.regionWPct = b.regionWPct; e.settings.regionHPct = b.regionHPct; } };
+  // Keep the box in step when the numeric inputs change.
+  bar.querySelectorAll('[data-k^="region"]').forEach((el) => el.addEventListener('input', setBoxFromPct));
+
+  // Load a preview: an image source directly, or the first frame of a video via
+  // an offscreen <video> painted to a canvas (no extra binaries needed).
+  const loadPreview = () => {
+    const first = ws.list.size ? [...ws.list.values()][0] : null;
+    if (!first) { empty.classList.remove('hidden'); img.removeAttribute('src'); box.classList.add('hidden'); return; }
+    const url = 'file:///' + first.path.replace(/\\/g, '/');
+    const ext = (first.path.split('.').pop() || '').toLowerCase();
+    const showImg = (src) => { img.src = src; empty.classList.add('hidden'); box.classList.remove('hidden'); setBoxFromPct(); };
+    if (['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'flv', 'mpg', 'ts'].includes(ext)) {
+      const v = document.createElement('video'); v.muted = true; v.preload = 'auto'; v.src = url;
+      v.addEventListener('loadeddata', () => { try { v.currentTime = Math.min(1, (v.duration || 1) / 2); } catch { /* */ } });
+      v.addEventListener('seeked', () => {
+        try { const c = document.createElement('canvas'); c.width = v.videoWidth || 640; c.height = v.videoHeight || 360; c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); showImg(c.toDataURL('image/png')); } catch { showImg(url); }
+      }, { once: true });
+      v.addEventListener('error', () => { empty.classList.remove('hidden'); }, { once: true });
+    } else {
+      showImg(url);
+    }
+  };
+  // Expose so addPaths/renderList can refresh the preview after files change.
+  state.refreshRegionPreview = loadPreview;
+  loadPreview();
+
+  // Drag to move / resize. Coordinates are normalised to the stage size, so the
+  // % maps 1:1 onto the source frame regardless of preview scale.
+  let mode = null, sx = 0, sy = 0, start = null;
+  const pct = (px, total) => Math.max(0, Math.min(100, px / total * 100));
+  const onDown = (e, m) => {
+    e.preventDefault(); mode = m; sx = e.clientX; sy = e.clientY;
+    start = { x: b.regionXPct ?? 25, y: b.regionYPct ?? 25, w: b.regionWPct ?? 50, h: b.regionHPct ?? 50 };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  };
+  const onMove = (e) => {
+    if (!mode) return;
+    const rect = stage.getBoundingClientRect();
+    const dxp = (e.clientX - sx) / rect.width * 100, dyp = (e.clientY - sy) / rect.height * 100;
+    if (mode === 'move') {
+      b.regionXPct = Math.max(0, Math.min(100 - start.w, start.x + dxp));
+      b.regionYPct = Math.max(0, Math.min(100 - start.h, start.y + dyp));
+    } else { // resize from bottom-right
+      b.regionWPct = Math.max(2, Math.min(100 - start.x, start.w + dxp));
+      b.regionHPct = Math.max(2, Math.min(100 - start.y, start.h + dyp));
+    }
+    setBoxFromPct(); syncInputs();
+  };
+  const onUp = () => { mode = null; apply(); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  box.addEventListener('mousedown', (e) => onDown(e, 'move'));
+  const handle = box.querySelector('.rb-br'); if (handle) handle.addEventListener('mousedown', (e) => { e.stopPropagation(); onDown(e, 'resize'); });
+  void pct;
 }
 
 // ---------- file list ----------
@@ -1350,6 +1452,8 @@ function renderList() {
 
   for (const entry of ws.list.values()) container.appendChild(buildRow(entry, ws, formats, showCog));
   refreshFooter();
+  // Region tools: refresh the preview/box when the file set changes.
+  if (typeof state.refreshRegionPreview === 'function') state.refreshRegionPreview();
 }
 
 // Build one file row. Controls are swapped in place by status (no full re-render).
@@ -1863,16 +1967,19 @@ function ytPlayFile(path, name) {
 }
 function ytClosePreview() { const wrap = $('ytPreview'), v = $('ytVideo'); if (!wrap || !v) return; try { v.pause(); } catch { /* */ } v.removeAttribute('src'); try { v.load(); } catch { /* */ } wrap.classList.add('hidden'); }
 function ytRefreshSub() {
-  const mode = $('ytMode').value, sub = $('ytSub');
+  const mode = $('ytMode').value, sub = $('ytSub'), subWrap = $('ytSubWrap');
+  // Thumbnail mode has no format choice — hide the Format row entirely.
+  if (subWrap) subWrap.classList.toggle('hidden', mode === 'thumbnail');
   if (mode === 'audio') sub.innerHTML = ['mp3', 'ogg', 'm4a', 'opus', 'wav'].map((f) => `<option value="${f}">${f.toUpperCase()}</option>`).join('');
   else if (mode === 'video') sub.innerHTML = ['mp4', 'mkv', 'webm'].map((f) => `<option value="${f}">${f.toUpperCase()}</option>`).join('');
-  else sub.innerHTML = ['with', 'without', 'captions'].map((f) => `<option value="${f}">${f === 'with' ? 'With timestamps' : f === 'without' ? 'Without timestamps (.txt)' : 'Captions (.srt)'}</option>`).join('');
+  else if (mode === 'transcription') sub.innerHTML = ['with', 'without', 'captions'].map((f) => `<option value="${f}">${f === 'with' ? 'With timestamps' : f === 'without' ? 'Without timestamps (.txt)' : 'Captions (.srt)'}</option>`).join('');
   if (sub._csRender) sub._csRender();
   ytRefreshQuality();
 }
 function ytRefreshQuality() {
   const mode = $('ytMode').value, sel = $('ytQuality'), wrap = $('ytQualityWrap');
-  if (mode === 'transcription') { wrap.classList.add('hidden'); return; }
+  // No quality choice for transcription or thumbnail.
+  if (mode === 'transcription' || mode === 'thumbnail') { wrap.classList.add('hidden'); return; }
   wrap.classList.remove('hidden');
   if (mode === 'audio') { $('ytQualityLabel').textContent = 'Bitrate'; sel.innerHTML = [320, 256, 192, 128, 96].map((k) => `<option value="${k}">${k} kbps</option>`).join(''); }
   else { $('ytQualityLabel').textContent = 'Max resolution'; const hs = (yt.info && yt.info.heights.length) ? yt.info.heights : [2160, 1440, 1080, 720, 480, 360]; sel.innerHTML = `<option value="0">Best available</option>` + hs.map((h) => `<option value="${h}">${h}p</option>`).join(''); }
@@ -1893,8 +2000,8 @@ async function ytDownload() {
   const opts = { url: yt.info.webpage, mode, outputDir: state.outputDir };
   if (mode === 'audio') { opts.audioFormat = sub; opts.audioKbps = Number($('ytQuality').value); }
   else if (mode === 'video') { opts.audioFormat = sub; opts.height = Number($('ytQuality').value); }
-  else { opts.subMode = sub; }
-  opts.thumbnail = $('ytThumb2').checked;
+  else if (mode === 'transcription') { opts.subMode = sub; }
+  // 'thumbnail' mode needs no extra options — the main process downloads only the image.
   try {
     const res = await window.api.ytDownload(opts);
     $('ytBar').style.width = '100%'; $('ytStatus').className = 'fr-status done';
@@ -2139,7 +2246,7 @@ function toggleFav(id, label) {
   else arr.unshift({ id, label: label || id }); // newest first
   saveFavs(arr);
   const now = !has;
-  if ($('favsPanel') && !$('favsPanel').classList.contains('hidden')) renderFavs();
+  if ($('favsModal') && !$('favsModal').classList.contains('hidden')) renderFavs();
   return now;
 }
 
@@ -2196,9 +2303,9 @@ function renderFavs() {
   }));
 }
 function toggleFavs(force) {
-  const p = $('favsPanel'); if (!p) return;
-  const show = force != null ? force : p.classList.contains('hidden');
-  if (show) { renderFavs(); p.classList.remove('hidden'); } else p.classList.add('hidden');
+  const m = $('favsModal'); if (!m) return;
+  const show = force != null ? force : m.classList.contains('hidden');
+  if (show) { renderFavs(); m.classList.remove('hidden'); } else m.classList.add('hidden');
 }
 function wireFavs() {
   const fb = $('favBtn');
@@ -2208,9 +2315,14 @@ function wireFavs() {
   });
   const navBtn = $('favsBtn');
   if (navBtn) navBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFavs(); });
-  document.addEventListener('click', (e) => {
-    const p = $('favsPanel');
-    if (p && !p.classList.contains('hidden') && !p.contains(e.target) && e.target !== $('favsBtn') && !($('favsBtn') && $('favsBtn').contains(e.target))) p.classList.add('hidden');
+  const closeBtn = $('favsClose');
+  if (closeBtn) closeBtn.addEventListener('click', () => toggleFavs(false));
+  // Close on backdrop click.
+  const m = $('favsModal');
+  if (m) m.addEventListener('click', (e) => { if (e.target === m) toggleFavs(false); });
+  // Close on Esc.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('favsModal') && !$('favsModal').classList.contains('hidden')) toggleFavs(false);
   });
 }
 
@@ -2749,6 +2861,43 @@ function openAiHub() {
 // Lazy-wired on first open. Model dropdown is filled from window.api.aimodels.list()
 // showing only INSTALLED whisper models; if none, a notice is shown and Run is disabled.
 const trState = { path: null, wired: false };
+// Show a small delete (trash) button next to an AI tool's status line. Clicking
+// it removes the produced file via window.api.deleteFile, then greys the result
+// area and hides the button. `statusId` is the .fr-status element id.
+function aiResultDelete(statusId, outputPath) {
+  const status = $(statusId);
+  if (!status || !outputPath) return;
+  const wrap = status.parentElement; if (!wrap) return;
+  let btn = wrap.querySelector('.ai-del');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.className = 'ai-del';
+    btn.type = 'button';
+    btn.title = 'Delete this file';
+    btn.innerHTML = `<span class="ic">${icon('trash')}</span>`;
+    wrap.appendChild(btn);
+  }
+  btn.classList.remove('hidden');
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    try {
+      await window.api.deleteFile(outputPath);
+      status.textContent = 'Deleted';
+      status.className = 'fr-status muted';
+      status.onclick = null;
+      btn.classList.add('hidden');
+      toast('File deleted');
+    } catch (err) {
+      toast('Could not delete: ' + ((err && err.message) || err), { kind: 'error' });
+    }
+  };
+}
+function aiResultDeleteHide(statusId) {
+  const status = $(statusId); if (!status || !status.parentElement) return;
+  const btn = status.parentElement.querySelector('.ai-del');
+  if (btn) btn.classList.add('hidden');
+}
+
 async function openTranscribe() {
   hideAll(); state.section = 'tools'; state.ws = null;
   state.currentTool = { id: 'transcribe', label: 'Subtitle / Transcript Extractor' }; updateFavBtn();
@@ -2817,6 +2966,7 @@ function wireTranscribe() {
     $('trRun').disabled = true;
     $('trProgress').classList.remove('hidden'); $('trBar').classList.add('indet');
     $('trStatus').textContent = 'Extracting audio…'; $('trStatus').className = 'fr-status'; $('trStatus').onclick = null;
+    aiResultDeleteHide('trStatus');
     try {
       const res = await window.api.aiTranscribe({ inputPath: trState.path, modelId, lang: $('trLang').value, formats, outputDir: state.outputDir });
       $('trBar').classList.remove('indet'); $('trBar').style.width = '100%';
@@ -2824,6 +2974,7 @@ function wireTranscribe() {
       const label = res.outputs.map((o) => o.ext.toUpperCase()).join(' + ');
       $('trStatus').textContent = `Saved ${label} — click to open`; $('trStatus').className = 'fr-status done';
       $('trStatus').onclick = () => window.api.showItem(first.path);
+      aiResultDelete('trStatus', first.path);
       toast('Transcript ready', { path: first.path });
       try { addRecent({ path: first.path }); } catch { /* */ }
     } catch (e) {
@@ -2891,11 +3042,13 @@ function wireUpscaleAi() {
     $('upRun').disabled = true;
     $('upProgress').classList.remove('hidden'); $('upBar').classList.add('indet');
     $('upStatus').textContent = 'Upscaling…'; $('upStatus').className = 'fr-status'; $('upStatus').onclick = null;
+    aiResultDeleteHide('upStatus');
     try {
       const res = await window.api.aiUpscale({ inputPath: upState.path, model, scale, outputDir: state.outputDir });
       $('upBar').classList.remove('indet'); $('upBar').style.width = '100%';
       $('upStatus').textContent = `Saved (${fmtBytes(res.outSize)}) — click to open`; $('upStatus').className = 'fr-status done';
       $('upStatus').onclick = () => window.api.showItem(res.outputPath);
+      aiResultDelete('upStatus', res.outputPath);
       toast('Upscale complete', { path: res.outputPath });
       try { addRecent({ path: res.outputPath }); } catch { /* */ }
     } catch (e) {
@@ -2932,8 +3085,12 @@ async function rbRefreshModels() {
   let installed = [];
   try {
     const all = (window.api.aimodels && await window.api.aimodels.list()) || [];
-    const list = Array.isArray(all) ? (all.bgremoval || []) : (all.bgremoval || []);
-    installed = (list || []).filter((m) => m.installed || m.isInstalled);
+    // status() returns { whisper:[...], bgremoval:[...] }. Be resilient to a flat
+    // array too (discriminated by feature/kind), mirroring the whisper path.
+    const list = Array.isArray(all)
+      ? all.filter((m) => m.feature === 'bgremoval' || m.kind === 'bgremoval')
+      : (all.bgremoval || all.bgRemoval || []);
+    installed = (list || []).filter((m) => m && (m.installed === true || m.isInstalled === true));
   } catch { installed = []; }
   const none = !engineOk || !installed.length;
   // The no-model notice only shows when the engine itself is OK (otherwise the
@@ -2973,6 +3130,34 @@ function rbBuildTensor(imageData) {
   }
   return out;
 }
+// Background removal exports the PNG via a browser download (to the user's
+// Downloads folder), so the renderer has the filename but not a guaranteed
+// absolute path. The delete button clears/greys the result + preview and, when
+// the saved file resolves on disk, removes it via window.api.deleteFile.
+function rbShowDelete(fname) {
+  const status = $('rbStatus');
+  const wrap = status && status.parentElement; if (!wrap) return;
+  let btn = wrap.querySelector('.ai-del');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.className = 'ai-del'; btn.type = 'button'; btn.title = 'Delete this file';
+    btn.innerHTML = `<span class="ic">${icon('trash')}</span>`;
+    wrap.appendChild(btn);
+  }
+  btn.classList.remove('hidden');
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    // Best-effort: try to delete the saved file from the Downloads folder.
+    try {
+      if (window.api.deleteFile) await window.api.deleteFile(fname);
+    } catch { /* file path may be unknown; still clear the result below */ }
+    const cv = $('rbPreview');
+    if (cv) { try { cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); } catch { /* */ } cv.classList.add('hidden'); }
+    status.textContent = 'Deleted'; status.className = 'fr-status muted'; status.onclick = null;
+    btn.classList.add('hidden');
+    toast('Result cleared');
+  };
+}
 function wireRemoveBg() {
   $('rbBg').addEventListener('change', () => {
     $('rbColorField').style.display = $('rbBg').value === 'custom' ? '' : 'none';
@@ -3010,6 +3195,7 @@ function wireRemoveBg() {
     $('rbRun').disabled = true;
     $('rbProgress').classList.remove('hidden'); $('rbBar').classList.add('indet');
     $('rbStatus').textContent = 'Removing background…'; $('rbStatus').className = 'fr-status'; $('rbStatus').onclick = null;
+    { const b = $('rbStatus').parentElement && $('rbStatus').parentElement.querySelector('.ai-del'); if (b) b.classList.add('hidden'); }
     try {
       const img = rbState.img;
       const W = img.naturalWidth, H = img.naturalHeight;
@@ -3082,7 +3268,8 @@ function wireRemoveBg() {
       document.body.appendChild(a); a.click(); a.remove();
 
       $('rbBar').classList.remove('indet'); $('rbBar').style.width = '100%';
-      $('rbStatus').textContent = `Saved ${fname}`; $('rbStatus').className = 'fr-status done';
+      $('rbStatus').textContent = `Saved ${fname} (in Downloads)`; $('rbStatus').className = 'fr-status done';
+      rbShowDelete(fname);
       toast('Background removed');
     } catch (e) {
       $('rbBar').classList.remove('indet');

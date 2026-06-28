@@ -119,22 +119,25 @@ body[data-theme="dark"] .navsearch-input { background: #2b2b31; }
 .fav-btn.on { color: var(--link); border-color: var(--link); }
 .fav-btn svg { width: 18px; height: 18px; display: block; }
 
-/* Saved-tools popover (modeled on .recents-panel) */
-.favs-panel { width: 300px; }
-.fav-row { flex-direction: row; align-items: center; gap: 8px; padding: 0; }
+/* Saved-tools modal (reuses .modal-overlay/.modal, styled like Settings). */
+.favs-modal { max-width: 460px; }
+.favs-modal .modal-body { padding: 0; }
+.fav-row { display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 0; border-bottom: 1px solid var(--steel); }
+.fav-row:last-child { border-bottom: none; }
+.fav-row:hover { background: var(--steel); }
 .fav-row .recent-open {
   flex: 1; display: flex; align-items: center; min-width: 0;
   background: none; border: none; text-align: left; cursor: pointer;
-  color: var(--ink); padding: 10px 12px;
+  color: var(--ink); padding: 12px 16px;
 }
 .fav-row .recent-open:hover { color: var(--link); }
-.fav-row .recent-open .recent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav-row .recent-open .recent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .fav-remove {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 34px; align-self: stretch; background: none; border: none; cursor: pointer;
-  color: var(--link); padding: 0 10px;
+  width: 40px; align-self: stretch; background: none; border: none; cursor: pointer;
+  color: var(--graphite); padding: 0 12px;
 }
-.fav-remove:hover { color: var(--ink); }
+.fav-remove:hover { color: #a32d2d; }
 .fav-remove .ic, .fav-remove svg { width: 16px; height: 16px; display: block; }
 
 /* Hero */
@@ -202,6 +205,19 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--s33) var(--s66);
 .to-field input, .to-field select { background: #fff; border: 1px solid var(--steel); padding: 8px 10px; font-size: 13px; color: var(--ink); min-width: 130px; }
 .to-field input:focus, .to-field select:focus { outline: none; border-color: var(--ink); }
 
+/* Region selector (Privacy Blur / Watermark Remover) */
+.region-wrap { width: 100%; margin-top: var(--s15); }
+.region-stage { position: relative; display: inline-block; max-width: 100%; border: 1px solid var(--steel); background: #fff; line-height: 0; user-select: none; }
+.region-stage img { display: block; max-width: 100%; max-height: 360px; }
+.region-empty { padding: 28px 18px; font-size: 13px; color: var(--graphite); font-weight: var(--thin); line-height: 1.5; max-width: 360px; }
+.region-box { position: absolute; border: 1px solid var(--ink); background: rgba(0,0,0,0.18); box-sizing: border-box; cursor: move; }
+.region-box.hidden { display: none; }
+.rb-h { position: absolute; width: 12px; height: 12px; background: var(--ink); border: 1px solid #fff; box-sizing: border-box; }
+.rb-br { right: -6px; bottom: -6px; cursor: nwse-resize; }
+body[data-theme="dark"] .region-stage { background: #1e1e23; }
+body[data-theme="dark"] .region-box { border-color: #fff; background: rgba(255,255,255,0.16); }
+body[data-theme="dark"] .rb-h { background: #fff; border-color: #1e1e23; }
+
 /* Batch Rename */
 .br-wrap { display: flex; gap: var(--s22); align-items: flex-start; flex-wrap: wrap; padding: var(--s15) 0; }
 .br-side { flex: 0 0 320px; display: flex; flex-direction: column; gap: var(--s15); }
@@ -240,6 +256,12 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--s33) var(--s66);
 .fr-status { font-size: 13px; color: var(--graphite); margin-top: 6px; }
 .fr-status.done { color: var(--ink); }
 .fr-status.error { color: #a32d2d; }
+.fr-status.muted { color: var(--graphite); }
+/* Delete (trash) button shown next to an AI tool result. */
+.ai-del { display: inline-flex; align-items: center; justify-content: center; margin-top: 6px; padding: 5px 8px; background: none; border: 1px solid var(--steel); color: var(--graphite); cursor: pointer; }
+.ai-del:hover { border-color: #a32d2d; color: #a32d2d; }
+.ai-del .ic, .ai-del svg { width: 15px; height: 15px; display: block; }
+.ai-del.hidden { display: none; }
 
 /* Footer */
 .footer { display: flex; align-items: center; justify-content: space-between; padding: var(--s15); border-top: 1px solid var(--steel); gap: var(--s15); flex-wrap: wrap; }
@@ -469,9 +491,12 @@ body[data-theme="dark"] .tb-btn:hover, body[data-theme="dark"] .tb-close:hover {
 
 /* Toasts — smooth slide + fade */
 .toasts { position: fixed; top: 42px; right: 16px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
-.toast { background: var(--carbon); color: var(--canvas); padding: 12px 16px; font-size: 13px; border: 1px solid var(--carbon); max-width: 320px; opacity: 0; transform: translateX(20px); transition: transform .5s cubic-bezier(0.22,1,0.36,1), opacity .5s cubic-bezier(0.22,1,0.36,1); }
+/* Toasts use a fixed dark neutral background with light text in BOTH themes so
+   they're always readable (the old var(--canvas) text went dark-on-dark in dark
+   mode). Errors use a muted red. Never blue. */
+.toast { background: #26262c; color: #f1f1ef; padding: 12px 16px; font-size: 13px; border: 1px solid #3a3a42; max-width: 320px; opacity: 0; transform: translateX(20px); transition: transform .5s cubic-bezier(0.22,1,0.36,1), opacity .5s cubic-bezier(0.22,1,0.36,1); }
 .toast.show { opacity: 1; transform: translateX(0); }
-.toast.err { background: #a32d2d; border-color: #a32d2d; }
+.toast.err { background: #5a2222; border-color: #7a2c2c; color: #ffe3e3; }
 
 /* Settings / setup */
 .perf-list { display: flex; flex-direction: column; gap: 0; }
@@ -582,6 +607,16 @@ body.reduce-motion .gh-fl-fill, body.reduce-motion .gh-fl-plane { transition: no
 /* AI Tools hub reuses .home-grid / .home-card; just reset the wrapper border. */
 .ai-hub { border-top: none; }
 .ai-fmt { display: flex; flex-direction: column; gap: 6px; }
+/* Subtitle / Transcript Extractor — landscape controls (model · language · formats
+   in one row), with the hint + run button on a footer row. Cuts vertical scroll. */
+.tr-grid { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(150px, 1fr) auto; gap: var(--s15); align-items: start; margin-top: var(--s15); }
+.tr-grid .field { margin: 0; }
+.tr-fmt { gap: 8px; }
+.tr-fmt-row { display: flex; flex-wrap: wrap; gap: 14px; }
+.tr-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s22); margin-top: var(--s15); flex-wrap: wrap; }
+.tr-hint { flex: 1; min-width: 240px; margin: 0; }
+.tr-foot #trRun { flex: none; }
+@media (max-width: 760px) { .tr-grid { grid-template-columns: 1fr; } }
 .ai-fmt-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--graphite); }
 .ai-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .ai-check input { width: auto; }
@@ -599,6 +634,10 @@ body.reduce-motion .gh-fl-fill, body.reduce-motion .gh-fl-plane { transition: no
 .yt-services-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--graphite); margin-bottom: 12px; }
 .yt-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .yt-chip { border: 1px solid var(--ink); padding: 5px 10px; font-size: 12px; font-weight: var(--light); }
+/* Dark mode: the supported-services block was hard-coded white. Make it match. */
+body[data-theme="dark"] .yt-services { background: #1b1b20; border-color: var(--steel); }
+body[data-theme="dark"] .yt-services-head { color: var(--graphite); }
+body[data-theme="dark"] .yt-chip { border-color: #44444e; color: var(--ink); }
 
 /* Custom dropdown (replaces native select) */
 .cs { position: relative; display: inline-block; min-width: 120px; width: 100%; }
@@ -626,7 +665,8 @@ body.reduce-motion .gh-fl-fill, body.reduce-motion .gh-fl-plane { transition: no
 .toast { display: flex; align-items: center; gap: 10px; }
 .toast.clickable { cursor: pointer; }
 .toast-msg { flex: 1; }
-.toast-x { background: none; border: none; color: var(--graphite); cursor: pointer; opacity: 0; transition: opacity .15s; display: inline-flex; }
+.toast-x { background: none; border: none; color: rgba(241,241,239,.7); cursor: pointer; opacity: 0; transition: opacity .15s; display: inline-flex; }
+.toast-x:hover { color: #fff; }
 .toast:hover .toast-x { opacity: 1; }
 .toast-x .ic { width: 14px; height: 14px; }
 
@@ -670,12 +710,15 @@ body[data-theme="dark"] .ap-cover { background: rgba(255,255,255,.06); border-co
 body[data-theme="dark"].reduce-transparency .aplayer { background: #1c1c22 !important; }
 body[data-theme="dark"].reduce-transparency .ap-controls { background: none !important; }
 
-/* Dark mode — highlighted/active/primary elements turn blue with white text + icons.
-   Without this, primary/selected blocks invert to near-white (--ink) and look wrong. */
-body[data-theme="dark"] .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-body[data-theme="dark"] .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-body[data-theme="dark"] .btn.primary .ic { color: #fff; }
-body[data-theme="dark"] .switch.on { background: var(--accent); border-color: var(--accent); }
+/* Dark mode — buttons use a NEUTRAL elevated-grey treatment (NO blue fills).
+   Primary buttons read as a slightly-raised grey panel with light text + a
+   hairline border; hover lifts a touch lighter. Links/blue text are unaffected. */
+body[data-theme="dark"] .btn.primary { background: #2f2f37; border-color: #44444e; color: var(--ink); }
+body[data-theme="dark"] .btn.primary:hover { background: #3a3a44; border-color: #55555f; }
+body[data-theme="dark"] .btn.primary .ic { color: var(--ink); }
+body[data-theme="dark"] .btn.primary:disabled { background: #1e1e23; border-color: #2f2f37; color: var(--graphite); }
+/* The toggle switch keeps a neutral "on" state too (no blue). */
+body[data-theme="dark"] .switch.on { background: #5a5a66; border-color: #5a5a66; }
 body[data-theme="dark"] .switch.on span { background: #fff; }
 /* Destructive action buttons keep their red intent, readable on dark. */
 body[data-theme="dark"] .btn.danger { color: #fff; }

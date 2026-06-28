@@ -55,10 +55,14 @@ function download(opts, onProgress) {
     '-o', outTmpl,
     '--print', 'after_move:filepath',
   ];
-  // Also save the thumbnail as a separate image file.
-  if (thumbnail && mode !== 'transcription') args.push('--write-thumbnail');
+  // Also save the thumbnail as a separate image file (legacy "also download" flag).
+  if (thumbnail && mode !== 'transcription' && mode !== 'thumbnail') args.push('--write-thumbnail');
 
-  if (mode === 'transcription') {
+  if (mode === 'thumbnail') {
+    // Download ONLY the thumbnail image (no media). Convert to jpg for broad
+    // compatibility (webp thumbnails don't open everywhere on Windows).
+    args.push('--skip-download', '--write-thumbnail', '--convert-thumbnails', 'jpg');
+  } else if (mode === 'transcription') {
     // Download captions / transcript as .srt (manual subs, else auto-generated).
     args.push('--skip-download', '--write-subs', '--write-auto-subs',
       '--sub-langs', 'en.*,en', '--convert-subs', 'srt', '--no-simulate');
@@ -116,6 +120,13 @@ function download(opts, onProgress) {
       // Subtitle file written (transcription mode).
       const sub = /Writing video subtitles to:\s*(.+\.srt)\s*$/.exec(line) || /Destination:\s*(.+\.srt)\s*$/.exec(line);
       if (sub && fs.existsSync(sub[1].trim())) { finalPath = sub[1].trim(); return; }
+      // Thumbnail file written (thumbnail mode). After --convert-thumbnails the
+      // final file is the .jpg; capture it if yt-dlp prints the path.
+      if (mode === 'thumbnail') {
+        const thm = /thumbnail .*? to:\s*(.+\.(?:jpg|jpeg|png|webp))\s*$/i.exec(line)
+          || /Destination:\s*(.+\.(?:jpg|jpeg|png|webp))\s*$/i.exec(line);
+        if (thm && fs.existsSync(thm[1].trim())) { finalPath = thm[1].trim(); return; }
+      }
       // --print after_move:filepath emits the final path on its own line.
       if (line && !line.startsWith('[') && /\.[A-Za-z0-9]{2,4}$/.test(line) && fs.existsSync(line)) {
         finalPath = line;
@@ -126,6 +137,25 @@ function download(opts, onProgress) {
     proc.on('close', (code) => {
       if (canceled) return reject(new Error('canceled'));
       if (code !== 0) return reject(new Error(`yt-dlp failed (code ${code})\n${stderrTail}`));
+
+      // Thumbnail-only: the --print line won't fire (--skip-download), so locate
+      // the newest image file written to outDir.
+      if (mode === 'thumbnail') {
+        if (!finalPath || !/\.(jpg|jpeg|png|webp)$/i.test(finalPath)) {
+          try {
+            const imgs = fs.readdirSync(outDir)
+              .filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f))
+              .map((f) => ({ p: path.join(outDir, f), t: fs.statSync(path.join(outDir, f)).mtimeMs }))
+              .filter((o) => o.t >= startedAt - 1000)
+              .sort((a, b) => b.t - a.t)[0];
+            if (imgs) finalPath = imgs.p;
+          } catch { /* */ }
+        }
+        if (!finalPath) return reject(new Error('No thumbnail available for this video.'));
+        let tSize = 0;
+        try { tSize = fs.statSync(finalPath).size; } catch { /* */ }
+        return resolve({ outputPath: finalPath, outSize: tSize });
+      }
 
       // Transcription: locate the .srt if not captured, and optionally strip timestamps.
       if (mode === 'transcription') {

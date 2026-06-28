@@ -144,6 +144,10 @@ const TOOL_CATEGORIES = [
       { id: 'video-speed', label: 'Video Speed', engine: 'op', mediaType: 'videoop', op: 'speed', accept: VIDEO, tags: ['speed', 'slow motion', 'fast', 'slowmo', 'timelapse', 'tempo', 'video'] },
       { id: 'fps-changer', label: 'FPS Changer', engine: 'fpspreview', accept: VIDEO, tags: ['fps', 'frame rate', 'framerate', 'smooth', 'interpolate', '60fps', 'video'] },
       { id: 'stabilize-video', label: 'Video Stabilizer', engine: 'op', mediaType: 'videoop', op: 'stabilize', accept: VIDEO, tags: ['stabilize', 'stabilizer', 'shaky', 'smooth', 'steady', 'deshake', 'video'] },
+      { id: 'motion-blur', label: 'Motion Blur', engine: 'op', mediaType: 'videoop', op: 'motionblur', accept: VIDEO, tags: ['motion blur', 'blur', 'smear', 'long exposure', 'frame blend', 'cinematic', 'video'] },
+      { id: 'privacy-blur', label: 'Privacy Blur', engine: 'op', mediaType: 'blurop', op: 'blur', accept: VIDEO.concat(IMAGE), tags: ['privacy', 'blur', 'censor', 'redact', 'face', 'license plate', 'pixelate', 'hide', 'region', 'video', 'image'] },
+      { id: 'watermark-remover', label: 'Watermark Remover', engine: 'op', mediaType: 'videoop', op: 'delogo', accept: VIDEO, tags: ['watermark', 'logo', 'remove', 'delogo', 'erase', 'cleanup', 'region', 'video'] },
+      { id: 'thumbnail-grab', label: 'Thumbnail Grab', engine: 'op', mediaType: 'thumbgrab', op: 'thumb', accept: VIDEO, out: 'png', pickOut: true, tags: ['thumbnail', 'frame', 'grab', 'snapshot', 'screenshot', 'still', 'capture', 'poster', 'video'] },
     ],
   },
   {
