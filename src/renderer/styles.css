@@ -736,8 +736,9 @@ body.reduce-transparency .modal-overlay { background: rgba(15,14,18,0.96) !impor
    responsive Advanced-Options modal sizing never overrides the settings box. */
 #settingsModal .modal { width: 760px; max-width: 760px; height: 480px; max-height: 480px; display: flex; flex-direction: column; }
 #settingsModal .modal-body { flex: 1; min-height: 0; overflow: hidden; }
-/* No scrollbar anywhere inside settings — every category must fit. */
-#settingsModal .settings-content { overflow: hidden; }
+/* Box stays a fixed size, but long categories (Local AI: engines + many models)
+   must scroll INSIDE it — otherwise lower sections get clipped/unreachable. */
+#settingsModal .settings-content { overflow-y: auto; }
 .settings-pane { display: flex; height: 100%; min-height: 0; }
 .settings-nav { width: 190px; flex: 0 0 auto; border-right: 1px solid var(--steel); display: flex; flex-direction: column; padding-right: 8px; overflow-y: auto; }
 /* BUG FIX #2: nav labels were 13px — too small. Bumped to 15px. */
@@ -876,3 +877,23 @@ body[data-theme="dark"] .me-lightbox { background: rgba(0,0,0,.82); }
 
 .muted { color: var(--graphite); }
 .hidden { display: none !important; }
+
+/* ---------- offline mode ---------- */
+/* Tiny on-brand pill in the appbar; only shown while body.is-offline. Monochrome
+   (inverted ink fill) so it reads in both light and dark — no blue. */
+.offline-pill {
+  display: none; align-items: center;
+  margin-left: 8px; padding: 2px 9px;
+  font-size: 11px; font-weight: var(--thin); text-transform: lowercase; letter-spacing: 0.02em;
+  background: var(--ink); color: var(--canvas); border: 1px solid var(--ink);
+}
+body.is-offline .offline-pill { display: inline-flex; }
+
+/* Fade + disable ONLY the internet-dependent entry points while offline. */
+body.is-offline .home-card.net-only,
+body.is-offline #ytPanel .yt-input-row,
+body.is-offline #ytPanel .yt-actions,
+body.is-offline #aiModels .ai-row:not([data-installed="1"]) [data-role="btn"] {
+  opacity: 0.45;
+  pointer-events: none;
+}

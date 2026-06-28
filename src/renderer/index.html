@@ -18,7 +18,7 @@
     </div>
 
     <header class="appbar">
-      <div class="brand"><span class="logo" id="logoIcon"></span> media toolbox</div>
+      <div class="brand"><span class="logo" id="logoIcon"></span> media toolbox<span class="offline-pill" id="offlinePill" title="Internet features are off. On-device tools still work.">offline</span></div>
       <nav class="mainnav" id="mainnav">
         <div class="navsearch" id="navSearch">
           <button class="navsearch-btn" id="navSearchBtn" title="Search" aria-label="Search"><span class="ic" data-icon="search"></span></button>
@@ -57,7 +57,7 @@
         <button class="home-card" data-section="compress"><span class="home-ic" data-icon="compress"></span><span class="home-title">Compress</span><span class="home-desc">shrink any media</span></button>
         <button class="home-card" data-section="tools"><span class="home-ic" data-icon="tools"></span><span class="home-title">Tools</span><span class="home-desc">trim · stretch · merge · youtube</span></button>
         <button class="home-card" data-tool="metadata"><span class="home-ic" data-icon="metadata"></span><span class="home-title">Metadata Editor</span><span class="home-desc">edit or scrub file metadata</span></button>
-        <button class="home-card" data-tool="downloader"><span class="home-ic" data-icon="download"></span><span class="home-title">Video Downloader</span><span class="home-desc">paste a link · 20+ sites</span></button>
+        <button class="home-card net-only" data-tool="downloader" data-offline-title="Requires internet"><span class="home-ic" data-icon="download"></span><span class="home-title">Video Downloader</span><span class="home-desc">paste a link · 20+ sites</span></button>
         <button class="home-card" data-tool="photofx"><span class="home-ic" data-icon="image"></span><span class="home-title">Photo Effects</span><span class="home-desc">filters · dither · glitch · ascii</span></button>
         <button class="home-card" data-tool="ai"><span class="home-ic" data-icon="tools"></span><span class="home-title">AI Tools</span><span class="home-desc">transcribe · upscale · remove bg</span></button>
       </section>

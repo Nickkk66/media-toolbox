@@ -11,7 +11,30 @@ const state = {
   openMenuItem: null, // remember last opened item per section
   backTo: 'home', // where the Back button should return to
   currentTool: null, // { id, label } of the tool screen currently open (null on home/profile/settings)
+  online: (typeof navigator !== 'undefined' && 'onLine' in navigator) ? navigator.onLine : true,
+  settings: null, // cached persisted settings (set during init)
 };
+
+// ---------- offline mode ----------
+// EFFECTIVE OFFLINE = no network connection OR the user's manual "offline mode".
+// Only the app's internet-dependent entry points are gated; on-device tools keep working.
+function isOffline() {
+  const noNet = (typeof navigator !== 'undefined' && 'onLine' in navigator) ? !navigator.onLine : false;
+  const manual = !!(state.settings && state.settings.offlineMode);
+  return noNet || manual;
+}
+// Toggle the body.is-offline class so CSS can fade/disable net-only UI.
+// Called on load, on window online/offline events, and on the manual toggle.
+function applyOnlineState() {
+  state.online = !isOffline();
+  const offline = !state.online;
+  document.body.classList.toggle('is-offline', offline);
+  // Surface a "Requires internet" tooltip on net-only entry points while offline.
+  document.querySelectorAll('[data-offline-title]').forEach((el) => {
+    if (offline) el.setAttribute('title', el.dataset.offlineTitle);
+    else el.removeAttribute('title');
+  });
+}
 
 function uid() { return 'j' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
 function icon(name) { return (window.ICONS && window.ICONS[name]) || ''; }
@@ -1986,6 +2009,7 @@ function ytRefreshQuality() {
   if (sel._csRender) sel._csRender();
 }
 async function ytFetch() {
+  if (isOffline()) { toast("You're offline — connect to the internet to download.", { kind: 'error' }); return; }
   const url = $('ytUrl').value.trim(); if (!url) return;
   ytErr(''); $('ytFetch').disabled = true; $('ytFetch').textContent = 'Fetching…';
   try { const info = await window.api.ytInfo(url); yt.info = info; $('ytThumb').src = info.thumbnail || ''; $('ytTitle').textContent = info.title; $('ytUploader').textContent = [info.uploader, fmtDur(info.durationSec)].filter(Boolean).join(' · '); ytRefreshSub(); $('ytInfo').classList.remove('hidden'); $('ytProgress').classList.add('hidden'); }
@@ -1993,6 +2017,7 @@ async function ytFetch() {
   finally { $('ytFetch').disabled = false; $('ytFetch').textContent = 'Fetch'; }
 }
 async function ytDownload() {
+  if (isOffline()) { toast("You're offline — connect to the internet to download.", { kind: 'error' }); return; }
   if (!yt.info || yt.downloading) return;
   yt.downloading = true; $('ytDownload').disabled = true; $('ytCancel').classList.remove('hidden');
   $('ytProgress').classList.remove('hidden'); $('ytBar').style.width = '0%'; $('ytStatus').className = 'fr-status'; $('ytStatus').textContent = 'Starting…';
@@ -2433,7 +2458,7 @@ function fmtModelSize(b) {
 // plus a hidden per-row progress bar shown while that model is downloading.
 function aiModelRow(feature, m) {
   const installed = m.installed;
-  return `<div class="ai-row" data-feature="${feature}" data-id="${m.id}">
+  return `<div class="ai-row" data-feature="${feature}" data-id="${m.id}" data-installed="${installed ? '1' : '0'}">
     <div class="ai-row-main">
       <div class="ai-row-top">
         <span class="ai-name">${m.label}</span>
@@ -2481,7 +2506,8 @@ function wireAiModelRows() {
         else toast('Could not remove model', { kind: 'error' });
         return;
       }
-      // Download.
+      // Download (requires internet).
+      if (isOffline()) { toast("You're offline — connect to the internet to download.", { kind: 'error' }); return; }
       const bar = row.querySelector('[data-role="bar"]');
       const fill = row.querySelector('[data-role="fill"]');
       btn.disabled = true; btn.textContent = 'downloading…';
@@ -2504,6 +2530,7 @@ function wireAiModelRows() {
 function setAiRowInstalled(row, installed) {
   const state = row.querySelector('[data-role="state"]');
   const btn = row.querySelector('[data-role="btn"]');
+  row.dataset.installed = installed ? '1' : '0';
   state.classList.toggle('on', installed);
   state.textContent = installed ? 'installed' : 'not installed';
   btn.disabled = false;
@@ -2557,6 +2584,8 @@ function settingsHtml(cat, s) {
 
   if (cat === 'advanced') return `
     <div class="set-advanced">
+    <h3 class="set-h">network</h3>
+    ${toggleRow('setOffline', 'offline mode', s.offlineMode, "Disables the app's internet features (downloader, model downloads). On-device tools keep working. (This doesn't change your system Wi-Fi.)")}
     <h3 class="set-h">about</h3>
     <div class="set-note">media toolbox v${s.appVersion || (state.caps && state.caps.appVersion) || '1.0.0'}</div>
     <h3 class="set-h">settings data</h3>
@@ -2639,6 +2668,8 @@ function wireSettingsCat(cat, s) {
     document.querySelectorAll('#settingsContent input[name="dl"]').forEach((r) => r.addEventListener('change', () => persist({ downloadLocation: r.value })));
     const pick = $('dlPick'); if (pick) pick.addEventListener('click', async (e) => { e.preventDefault(); const d = await window.api.pickOutputDir(); if (d) { state._customDir = d; $('dlCustomDesc').textContent = d; const r = document.querySelector('#settingsContent input[name="dl"][value="custom"]'); if (r) r.checked = true; persist({ downloadLocation: 'custom', customDownloadDir: d }); } });
   } else if (cat === 'advanced') {
+    // Manual "offline mode" toggle — app-level only; immediately re-apply the offline UI.
+    wireToggle('setOffline', 'offlineMode', () => applyOnlineState());
     $('setReset').addEventListener('click', async () => {
       if (!(await confirmModal('Reset all settings?', 'This will restore every setting to its default value.'))) return;
       state.settings = await window.api.resetSettings();
@@ -3302,6 +3333,8 @@ function openProfile() {
   }
 }
 async function loadGithub() {
+  // Offline: skip the GitHub fetches silently, but still render offline-safe placeholders.
+  if (isOffline()) { renderFlightCard(null); return; }
   try {
     const u = await (await fetch(`https://api.github.com/users/${GH_USER}`)).json();
     if (u && u.avatar_url) $('ghAvatar').src = u.avatar_url;
@@ -3612,6 +3645,13 @@ function dropSplash() {
 async function pick() { if (!state.ws) return; const paths = await window.api.pickFiles(); if (paths.length) addPaths(paths); }
 async function init() {
   state.caps = await window.api.capabilities();
+  // Load settings early so offline detection (manual + network) is ready before
+  // the GitHub/update fetches fire at the end of init.
+  try { state.settings = await window.api.getSettings(); } catch { /* */ }
+  // Track connectivity: react to the OS going on/offline.
+  window.addEventListener('online', applyOnlineState);
+  window.addEventListener('offline', applyOnlineState);
+  applyOnlineState();
   $('logoIcon').innerHTML = icon('home'); injectIcons(document);
   $('homeBtn').addEventListener('click', showHome);
   $('profileBtn').addEventListener('click', openProfile);
@@ -3656,6 +3696,7 @@ async function init() {
 
 // Compare bundled version against the latest GitHub release.
 async function checkForUpdate() {
+  if (isOffline()) return; // silently skip the GitHub release check when offline
   try {
     const cur = (state.caps && state.caps.appVersion) || '1.0.0';
     const r = await (await fetch('https://api.github.com/repos/pipelinear/media-toolbox/releases/latest')).json();
