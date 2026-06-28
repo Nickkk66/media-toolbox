@@ -3345,6 +3345,9 @@ function buildSearchIndex() {
     // AI tools were delisted from the Tools accordion (they live in the Home AI
     // hub) but stay searchable; openItem routes them by engine like any tool.
     ['tool', window.AI_CATEGORIES],
+    // Home-launched specials (Metadata Editor, Video Downloader, Spotify) that are
+    // not in any registry. kind 'special' → searchOpen() routes by item.open.
+    ['special', window.SPECIAL_CATEGORIES],
   ];
   for (const [kind, cats] of groups) {
     if (!Array.isArray(cats)) continue;
@@ -3410,7 +3413,7 @@ function searchQuery(raw) {
 function renderSearchResults(results) {
   const box = $('navSearchResults'); if (!box) return;
   if (!results.length) { box.innerHTML = `<div class="navsearch-empty">no matches</div>`; box.classList.remove('hidden'); return; }
-  const kindLbl = { convert: 'convert', compress: 'compress', tool: 'tool' };
+  const kindLbl = { convert: 'convert', compress: 'compress', tool: 'tool', special: 'tool' };
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   box.innerHTML = results.map((r, i) =>
     `<button class="navsearch-opt" data-i="${i}"><span class="ns-label">${esc(r.e.label)}</span><span class="ns-hint">${esc(kindLbl[r.e.kind] || r.e.kind)} · ${esc(r.e.cat)}</span></button>`
@@ -3421,9 +3424,21 @@ function renderSearchResults(results) {
     const r = results[Number(el.dataset.i)]; if (r) searchOpen(r.e);
   }));
 }
+// Maps a SPECIAL_TOOLS `open` key to its opener. Specials aren't in any registry, so
+// openItem can't route them — searchOpen dispatches here, sets Back→home, then collapses.
+const SPECIAL_OPENERS = {
+  metaEditor: () => openMetaEditor(),
+  youtube: () => openSpecial('youtube'),
+  spotify: () => openSpotify(),
+};
 // Route a chosen entry exactly like the accordion does (openItem handles special engines).
 function searchOpen(entry) {
   searchCollapse(true);
+  if (entry.kind === 'special') {
+    const fn = SPECIAL_OPENERS[entry.item && entry.item.open];
+    if (fn) { state.backTo = 'home'; fn(); }
+    return;
+  }
   openItem(entry.item, entry.kind);
 }
 function searchCollapse(clear) {
@@ -3714,7 +3729,13 @@ const CHANGELOG_PLANNED = [
   'Additional local AI tools',
 ];
 function changelogListHtml(arr) {
-  return `<ul class="cl-list">${arr.map((t) => `<li class="cl-item">${mtbEsc(t)}</li>`).join('')}</ul>`;
+  // Each entry is either a plain string (title only) or { title, desc } for an
+  // optional second description line. Boxes are styled in .cl-list / .cl-item.
+  return `<ul class="cl-list">${arr.map((e) => {
+    const title = typeof e === 'string' ? e : (e && e.title) || '';
+    const desc = typeof e === 'string' ? '' : (e && e.desc) || '';
+    return `<li class="cl-item"><span class="cl-title">${mtbEsc(title)}</span>${desc ? `<span class="cl-desc">${mtbEsc(desc)}</span>` : ''}</li>`;
+  }).join('')}</ul>`;
 }
 // ---------- reusable component builders (HTML-string helpers) ----------
 function seg(name, cur, opts, wrap) {
@@ -3904,10 +3925,9 @@ function settingsHtml(cat, s) {
     <h3 class="set-h">current version</h3>
     <div class="set-note">media toolbox v${mtbEsc(ver)}</div>
     ${hasCheck
-      ? actionRow([['setCheckUpdate', 'check for updates', 'download']]) + '<p class="set-note">checks GitHub for a newer release. you\'ll be notified in-app if one is available.</p>'
+      ? actionRow([['setCheckUpdate', 'check for updates', 'download']])
       : '<p class="set-note">you\'re running the latest bundled version.</p>'}
     <h3 class="set-h">recently added</h3>
-    <p class="set-note">the big features that have landed in media toolbox.</p>
     ${changelogListHtml(CHANGELOG_RECENT)}
     <h3 class="set-h">coming soon</h3>
     <p class="set-note">on the roadmap for upcoming releases.</p>
@@ -4004,8 +4024,23 @@ function wireSettingsCat(cat, s) {
     if (chk) chk.addEventListener('click', async () => {
       if (isOffline()) { toast("You're offline — connect to the internet to check for updates.", { kind: 'error' }); return; }
       chk.disabled = true;
-      try { await checkForUpdate(); toast('Checked for updates'); }
-      finally { chk.disabled = false; }
+      chk.classList.add('is-loading');
+      // Loading state — swap to "checking…" while the GitHub release check runs.
+      chk.innerHTML = `<span class="ic">${icon('download')}</span>checking…`;
+      try {
+        const res = await checkForUpdate();
+        const st = res && res.status;
+        if (st === 'update') toast(`Update available — v${res.latest} (you have v${res.current})`);
+        else if (st === 'current') toast(`You're up to date (v${res.current})`);
+        else if (st === 'offline') toast("You're offline — connect to the internet to check for updates.", { kind: 'error' });
+        else toast("Couldn't check for updates — try again later.", { kind: 'error' });
+      } catch {
+        toast("Couldn't check for updates — try again later.", { kind: 'error' });
+      } finally {
+        chk.disabled = false;
+        chk.classList.remove('is-loading');
+        chk.innerHTML = `<span class="ic">${icon('download')}</span>check for updates`;
+      }
     });
   } else if (cat === 'advanced') {
     // Manual "offline mode" toggle — app-level only; immediately re-apply the offline UI.
@@ -5154,6 +5189,49 @@ function startPixelCanvas() {
 
 // ---------- audio player (profile) ----------
 // Playlist model — add more tracks here later; the player handles any length.
+// Preferred play order for the About player. Each string is matched (case-insensitive
+// substring) against a track's TITLE or ARTIST. Matching tracks are ordered exactly as
+// listed here; any track that matches none keeps its original order and follows after.
+// Edit this array to re-order the player.
+const SONG_ORDER = ['you are in my system', 'closer', 'calvin harris', 'chief keef', 'nle choppa'];
+
+// Stable-sort a playlist into SONG_ORDER. A track's rank = index of the first SONG_ORDER
+// entry whose string appears in its title or artist; unmatched tracks rank last and keep
+// their incoming relative order (stable via the original-index tiebreak).
+function sortPlaylist(list) {
+  const rankOf = (tr) => {
+    const hay = `${tr.title || ''} ${tr.artist || ''}`.toLowerCase();
+    const idx = SONG_ORDER.findIndex((k) => hay.includes(k));
+    return idx === -1 ? SONG_ORDER.length : idx;
+  };
+  return list
+    .map((tr, i) => ({ tr, i, r: rankOf(tr) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.tr);
+}
+
+// Set a track-label's text and toggle a one-line marquee. The card width is fixed; the
+// label box clips (white-space:nowrap; overflow:hidden in CSS) and the text lives in an
+// inner `.ap-title-inner` span. When that span is wider than its box we add `.marquee`
+// and set --ap-marquee-shift to the exact overflow distance, so the CSS animation slides
+// the text left to reveal the tail and back. Short text that fits gets no animation.
+function setMarqueeText(box, text) {
+  if (!box) return;
+  let inner = box.querySelector('.ap-title-inner');
+  if (!inner) { inner = document.createElement('span'); inner.className = 'ap-title-inner'; box.textContent = ''; box.appendChild(inner); }
+  inner.textContent = text || '';
+  box.classList.remove('marquee');
+  inner.style.removeProperty('--ap-marquee-shift');
+  // Measure after layout settles (fonts/reflow) so scrollWidth is accurate.
+  requestAnimationFrame(() => {
+    const overflow = inner.scrollWidth - box.clientWidth;
+    if (overflow > 1 && !document.body.classList.contains('reduce-motion')) {
+      inner.style.setProperty('--ap-marquee-shift', `-${overflow}px`);
+      box.classList.add('marquee');
+    }
+  });
+}
+
 // Fallback used only if songsList() returns empty or errors.
 let PLAYLIST = [
   { src: '../songs/song.mp3', title: 'You Are in My System', artist: '', cover: '../songs/cover.jpg' },
@@ -5174,6 +5252,7 @@ async function wireAudioPlayer() {
         artist: s.artist || '',
         cover: s.cover || '../songs/cover.jpg',
       }));
+      PLAYLIST = sortPlaylist(PLAYLIST);
     }
   } catch { /* keep fallback PLAYLIST */ }
   const fmt = (s) => { s = s || 0; const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, '0')}`; };
@@ -5212,7 +5291,7 @@ async function wireAudioPlayer() {
     endFading = false;
     cancelAnimationFrame(fadeRaf);
     $('apCover').src = tr.cover;
-    $('apTitle').textContent = tr.artist ? `${tr.title} — ${tr.artist}` : tr.title;
+    setMarqueeText($('apTitle'), tr.artist ? `${tr.title} — ${tr.artist}` : tr.title);
     a.src = tr.src;
     tintFromCover(tr.cover);
     if (autoplay) {
@@ -5380,7 +5459,24 @@ async function init() {
   $('homeBtn').addEventListener('click', showHome);
   $('profileBtn').addEventListener('click', openProfile);
   $('settingsBtn').addEventListener('click', () => openSettings('appearance'));
-  document.querySelectorAll('#homeView .home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else if (c.dataset.tool === 'ai') { state.backTo = 'home'; openAiHub(); } else if (c.dataset.tool === 'spotify') { state.backTo = 'home'; openSpotify(); } else showSection(c.dataset.section); }));
+  document.querySelectorAll('#homeView .home-card').forEach((c) => {
+    c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else if (c.dataset.tool === 'ai') { state.backTo = 'home'; openAiHub(); } else if (c.dataset.tool === 'spotify') { state.backTo = 'home'; openSpotify(); } else showSection(c.dataset.section); });
+    // Fluid hover: the hovered card gets the full highlight and its immediate
+    // neighbours get a softer tint, so the highlight "spills" instead of being
+    // sharply contained. CSS can't select previous siblings, so do it in JS.
+    c.addEventListener('mouseenter', () => {
+      c.classList.add('hot');
+      const prev = c.previousElementSibling, next = c.nextElementSibling;
+      if (prev && prev.classList.contains('home-card')) prev.classList.add('hot-near');
+      if (next && next.classList.contains('home-card')) next.classList.add('hot-near');
+    });
+    c.addEventListener('mouseleave', () => {
+      c.classList.remove('hot');
+      const prev = c.previousElementSibling, next = c.nextElementSibling;
+      if (prev) prev.classList.remove('hot-near');
+      if (next) next.classList.remove('hot-near');
+    });
+  });
   wireTitlebar(); wireStretch(); wireMetaEditor();
   $('settingsClose').addEventListener('click', () => $('settingsModal').classList.add('hidden'));
   $('settingsModal').addEventListener('click', (e) => { if (e.target === $('settingsModal')) $('settingsModal').classList.add('hidden'); });
@@ -5420,19 +5516,21 @@ async function init() {
 
 // Compare bundled version against the latest GitHub release.
 async function checkForUpdate() {
-  if (isOffline()) return; // silently skip the GitHub release check when offline
+  if (isOffline()) return { status: 'offline' }; // silently skip the GitHub release check when offline
   try {
     const cur = (state.caps && state.caps.appVersion) || '1.0.0';
     const r = await (await fetch('https://api.github.com/repos/pipelinear/media-toolbox/releases/latest')).json();
-    if (!r || !r.tag_name) return;
+    if (!r || !r.tag_name) return { status: 'unknown' };
     const latest = String(r.tag_name).replace(/^v/, '');
     if (cmpVer(latest, cur) > 0) {
       $('unBody').textContent = `v${latest} is out (you have v${cur}).`;
       const url = r.html_url || 'https://github.com/pipelinear/media-toolbox/releases/latest';
       $('unDownload').onclick = () => window.api.openExternal(url);
       $('updateNotice').classList.remove('hidden');
+      return { status: 'update', latest, current: cur };
     }
-  } catch { /* offline — ignore */ }
+    return { status: 'current', current: cur };
+  } catch { return { status: 'error' }; } // offline / network failure — ignore
 }
 function cmpVer(a, b) {
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);

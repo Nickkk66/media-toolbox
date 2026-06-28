@@ -154,7 +154,10 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--s33) var(--s66);
   background: none; border: none; border-right: 1px solid var(--steel); border-bottom: 1px solid var(--steel);
   padding: var(--s33); cursor: pointer; text-align: left; transition: background .15s;
 }
-.home-card:hover { background: #fff; }
+/* Fluid hover: hovered card gets the full highlight, immediate neighbours a
+   softer tint so it "spills" rather than being sharply contained (see app.js). */
+.home-card:hover, .home-card.hot { background: #fff; }
+.home-card.hot-near { background: rgba(0, 0, 0, .035); }
 .home-ic { width: 28px; height: 28px; color: var(--ink); }
 .home-ic svg { width: 100%; height: 100%; stroke-width: 1.1; }
 .home-title { font-size: 24px; font-weight: var(--light); }
@@ -664,7 +667,22 @@ body.reduce-motion .gh-fl-fill, body.reduce-motion .gh-fl-plane { transition: no
 .aplayer { width: 232px; flex: 0 0 auto; background: #f0f1f3; border: 1px solid var(--steel); border-radius: 0; padding: 12px; display: flex; flex-direction: column; gap: 10px; box-shadow: none; transition: background .4s ease; }
 .ap-cover { aspect-ratio: 1 / 1; height: auto; border: 1px solid var(--steel); border-radius: 0; overflow: hidden; background: rgba(0,0,0,.06); }
 .ap-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ap-title { color: #14140f; font-weight: var(--light); font-size: 15px; text-align: center; margin: 2px 0 0; }
+/* Fixed-size, one-line track label. The card width is fixed (.aplayer width:232px), so
+   the title must never widen it: clip overflow and keep it on a single line. When the
+   text is wider than the box, JS adds .marquee + sets --ap-marquee-shift and the inner
+   span slides horizontally so the full title can be read. */
+.ap-title { color: #14140f; font-weight: var(--light); font-size: 15px; text-align: center; margin: 2px 0 0; white-space: nowrap; overflow: hidden; }
+.ap-title-inner { display: inline-block; white-space: nowrap; will-change: transform; }
+/* Non-marquee (fits): keep it centered. Marquee: left-align + animate translateX from
+   0 → overflow (text fully revealed) → back, with pauses at each end. */
+.ap-title.marquee { text-align: left; }
+.ap-title.marquee .ap-title-inner { animation: ap-marquee 9s ease-in-out infinite; }
+@keyframes ap-marquee {
+  0%, 18%   { transform: translateX(0); }
+  50%, 68%  { transform: translateX(var(--ap-marquee-shift, 0)); }
+  100%      { transform: translateX(0); }
+}
+body.reduce-motion .ap-title.marquee .ap-title-inner { animation: none; transform: none; }
 .ap-slider { width: 100%; height: 4px; background: rgba(0,0,0,.16); border-radius: 0; cursor: pointer; }
 .ap-fill { height: 100%; width: 0; background: #14140f; border-radius: 0; transition: width .1s linear; }
 .ap-times { display: flex; justify-content: space-between; color: rgba(20,20,15,.7); font-size: 12px; }
@@ -816,7 +834,9 @@ body[data-theme="dark"] .to-field select { background: #1e1e23; }
 /* Dark mode readability — home cards, profile signature, flight card, audio player.
    Light mode is untouched; these only scope to the dark theme. */
 /* Home card hover must NOT turn white (it hides the text in dark) — use a lighter dark hue. */
-body[data-theme="dark"] .home-card:hover { background: #20202a; }
+body[data-theme="dark"] .home-card:hover,
+body[data-theme="dark"] .home-card.hot { background: #20202a; }
+body[data-theme="dark"] .home-card.hot-near { background: rgba(255, 255, 255, .045); }
 body[data-theme="dark"] .home-title { color: var(--ink); }
 body[data-theme="dark"] .home-desc { color: var(--graphite); }
 /* Flight status card already uses theme vars; nudge the empty track for contrast on dark. */
@@ -960,10 +980,17 @@ body[data-theme="dark"] .act-btn { background: #1e1e23; }
 .ai-bar span { position: absolute; left: 0; top: 0; height: 1px; width: 0; background: var(--ink); transition: width .15s linear; }
 .ai-row .act-btn { flex: 0 0 auto; }
 .ai-row .act-btn:disabled { opacity: .5; cursor: default; }
-/* Updates page — static changelog / roadmap (read-only) */
-.cl-list { list-style: none; margin: 8px 0 4px; padding: 0; border-top: 1px solid var(--steel); }
-.cl-item { position: relative; padding: 11px 0 11px 20px; border-bottom: 1px solid var(--steel); font-size: 13px; font-weight: var(--thin); line-height: 1.55; color: var(--ink); }
-.cl-item::before { content: ""; position: absolute; left: 2px; top: 18px; width: 6px; height: 6px; background: var(--ink); }
+/* Updates page — static changelog / roadmap (read-only).
+   Roomy on-brand boxes: comfortable padding, hairline matching border. */
+.cl-list { list-style: none; margin: 10px 0 6px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.cl-item {
+  position: relative; padding: 16px 18px 16px 34px;
+  border: 1px solid var(--steel); background: var(--canvas);
+  color: var(--ink); transition: border-color .15s, background .15s;
+}
+.cl-item::before { content: ""; position: absolute; left: 16px; top: 22px; width: 6px; height: 6px; background: var(--ink); }
+.cl-title { display: block; font-size: 14px; font-weight: var(--light); line-height: 1.5; }
+.cl-desc { display: block; margin-top: 5px; font-size: 12.5px; font-weight: var(--thin); line-height: 1.55; color: var(--graphite); }
 /* File preview card */
 .fpc { border: 1px solid var(--steel); margin-top: 10px; }
 .fpc-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }

@@ -206,6 +206,18 @@ const AI_TOOLS = [
   { id: 'tts', label: 'Text to Speech', engine: 'tts', tags: ['tts', 'text to speech', 'speech', 'voice', 'narration', 'voiceover', 'speak', 'say', 'audio', 'ai'] },
 ];
 
+// Home-launched / special tools that are NOT in the *_CATEGORIES registries (they open
+// from Home cards or custom flows). Listed here purely so global search can find them.
+// `open` is a router key handled by searchOpen() in app.js (special:<open> → opener fn).
+// Spotify is also a real Tools item (engine:'spotify'); it appears here too so the search
+// index reliably surfaces it. Photo Effects + the AI tools already live in the registries
+// and are indexed there — no need to duplicate them in this list.
+const SPECIAL_TOOLS = [
+  { id: 'metadata-editor', label: 'Metadata Editor', open: 'metaEditor', tags: ['metadata', 'tags', 'exif', 'id3', 'edit', 'scrub', 'title', 'artist'] },
+  { id: 'video-downloader', label: 'Video Downloader', open: 'youtube', tags: ['download', 'youtube', 'video', 'url', 'yt-dlp', 'rip', 'clip'] },
+  { id: 'spotify-downloader', label: 'Spotify Downloader', open: 'spotify', tags: ['spotify', 'music', 'song', 'mp3', 'album', 'cover', 'rip'] },
+];
+
 function findIn(cats, id) {
   for (const cat of cats) { const c = cat.items.find((i) => i.id === id); if (c) return c; }
   return null;
@@ -223,6 +235,10 @@ window.TOOL_CATEGORIES = TOOL_CATEGORIES;
 // include them without re-shaping its loop.
 window.AI_TOOLS = AI_TOOLS;
 window.AI_CATEGORIES = [{ name: 'AI Tools', icon: 'tools', items: AI_TOOLS }];
+// Specials surfaced in global search. Wrapped as a single category so the search index
+// (which iterates *_CATEGORIES) can include them via the same loop.
+window.SPECIAL_TOOLS = SPECIAL_TOOLS;
+window.SPECIAL_CATEGORIES = [{ name: 'Tools', icon: 'tools', items: SPECIAL_TOOLS }];
 window.findConverter = findConverter;
 window.findCompressor = findCompressor;
 window.findTool = findTool;
