@@ -11,9 +11,9 @@
     <div id="titlebar" class="titlebar">
       <div class="tb-title">media toolbox</div>
       <div class="tb-controls">
-        <button id="tbMin" class="tb-btn" title="Minimize">&#x2013;</button>
-        <button id="tbMax" class="tb-btn" title="Maximize">&#x25A1;</button>
-        <button id="tbClose" class="tb-btn tb-close" title="Close">&#x2715;</button>
+        <button id="tbMin" class="tb-btn" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1" /></svg></button>
+        <button id="tbMax" class="tb-btn" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1" /></svg></button>
+        <button id="tbClose" class="tb-btn tb-close" title="Close" aria-label="Close"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1" /><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" stroke-width="1" /></svg></button>
       </div>
     </div>
 
@@ -49,6 +49,7 @@
         <button class="home-card" data-section="tools"><span class="home-ic" data-icon="tools"></span><span class="home-title">Tools</span><span class="home-desc">trim · stretch · merge · youtube</span></button>
         <button class="home-card" data-tool="metadata"><span class="home-ic" data-icon="metadata"></span><span class="home-title">Metadata Editor</span><span class="home-desc">edit or scrub file metadata</span></button>
         <button class="home-card" data-tool="downloader"><span class="home-ic" data-icon="download"></span><span class="home-title">Video Downloader</span><span class="home-desc">paste a link · 20+ sites</span></button>
+        <button class="home-card" data-tool="photofx"><span class="home-ic" data-icon="image"></span><span class="home-title">Photo Effects</span><span class="home-desc">filters · dither · glitch · ascii</span></button>
       </section>
 
       <section id="convertMenu" class="accordion hidden"></section>
@@ -105,10 +106,30 @@
         </div>
       </div>
 
+      <!-- FPS Changer (preview before export) -->
+      <div id="fpsPanel" class="panel hidden">
+        <div class="toolbar">
+          <button id="fpsLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose video</button>
+          <span class="muted" id="fpsName"></span>
+        </div>
+        <div class="st-wrap">
+          <div class="st-preview"><video id="fpsVideo" class="st-video" controls></video></div>
+          <div class="st-side">
+            <label class="field"><span>Target FPS</span><input id="fpsValue" type="number" value="60" min="1" max="240"/></label>
+            <label class="fps-check"><input id="fpsInterp" type="checkbox"/> <span>Smooth (motion interpolation)</span></label>
+            <p class="hint">Render a preview to a temporary file, watch it inline, then export when you're happy. Smoothing synthesizes in-between frames (slower).</p>
+            <button id="fpsRender" class="btn primary big" disabled>Render preview <span class="ic" data-icon="arrowRight"></span></button>
+            <div id="fpsProgress" class="yt-progress hidden"><div class="bar"><div id="fpsBar" class="bar-fill"></div></div><div id="fpsStatus" class="fr-status"></div></div>
+            <button id="fpsExport" class="btn big" disabled>Export <span class="ic" data-icon="download"></span></button>
+          </div>
+        </div>
+      </div>
+
       <!-- Metadata Editor -->
       <div id="metaPanel" class="panel hidden">
         <div class="toolbar">
           <button id="meLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose file</button>
+          <button id="meView" class="btn ghost hidden"><span class="ic" data-icon="search"></span> View</button>
           <span class="muted" id="meName"></span>
         </div>
         <div id="meEmpty" class="dropbox"><div class="dropbox-inner"><p class="dropbox-sub">Choose an image, audio or video file to read its metadata.<br/>Images: jpg, png, webp, tiff, heic · A/V: mp4, mkv, mov, webm, avi · mp3, m4a, flac, ogg, opus, wav</p></div></div>
@@ -125,6 +146,11 @@
           </div>
           <div id="meStatus" class="fr-status"></div>
         </div>
+      </div>
+
+      <!-- Metadata media lightbox -->
+      <div id="meLightbox" class="me-lightbox hidden">
+        <div class="me-lightbox-stage" id="meLightboxStage"></div>
       </div>
 
       <!-- Batch Rename -->
@@ -159,69 +185,94 @@
 
       <!-- Photo Effects -->
       <div id="fxPanel" class="panel hidden">
-        <div class="toolbar">
-          <button id="fxLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose image</button>
-          <button id="fxDemo" class="btn ghost">Demo image</button>
-          <button id="fxClear" class="btn ghost">Clear effects</button>
-          <span class="muted" id="fxName"></span>
-        </div>
         <div class="fx-wrap">
           <div class="fx-side">
-            <div class="me-sec-title">effects stack</div>
-            <div id="fxStack" class="fx-stack"></div>
-            <div class="fx-add">
-              <select id="fxAdd">
-                <option value="">Add effect…</option>
-                <optgroup label="core">
-                  <option value="dither">dither</option>
-                  <option value="ascii">ascii</option>
-                  <option value="halftone">halftone</option>
-                  <option value="posterize">posterize</option>
-                  <option value="pixel">pixelate</option>
-                  <option value="threshold">threshold</option>
-                </optgroup>
-                <optgroup label="glitch">
-                  <option value="rgbshift">rgb shift</option>
-                  <option value="scanglitch">scan glitch</option>
-                  <option value="slice">slice displace</option>
-                </optgroup>
-                <optgroup label="atmosphere">
-                  <option value="grain">film grain</option>
-                  <option value="crt">crt / scanlines</option>
-                  <option value="vignette">vignette</option>
-                  <option value="chromatic">chromatic</option>
-                  <option value="glow">bloom / glow</option>
-                </optgroup>
-                <optgroup label="distort">
-                  <option value="blur">blur</option>
-                  <option value="edge">edge detect</option>
-                  <option value="emboss">emboss</option>
-                </optgroup>
-              </select>
-              <button id="fxAddBtn" class="btn">Add</button>
-            </div>
-            <div class="me-sec-title">presets</div>
-            <select id="fxPreset">
-              <option value="">Choose a preset stack…</option>
-            </select>
 
-            <div class="me-sec-title">params</div>
-            <div id="fxParams" class="fx-params"><p class="hint">Select an effect to edit its parameters.</p></div>
-
-            <div class="me-sec-title">palette</div>
-            <div class="fx-pal">
-              <div id="fxSwatches" class="fx-swatches"></div>
-              <select id="fxPalPreset"><option value="">Palette preset…</option></select>
+            <!-- INPUT -->
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">input</div>
+              <div class="fx-pnl-b">
+                <div class="fx-btn-row">
+                  <button id="fxLoad" class="fx-btn">load image</button>
+                  <button id="fxLoadVid" class="fx-btn">load video</button>
+                </div>
+                <button id="fxWebcam" class="fx-btn fx-btn-wide">use webcam</button>
+                <button id="fxDemo" class="fx-btn fx-btn-wide">demo scene</button>
+                <span class="fx-input-name" id="fxName"></span>
+              </div>
             </div>
 
-            <div class="me-sec-title">adjust</div>
-            <div class="fx-adjust">
-              <label class="fx-field"><span>Brightness <b id="fxBrightnessVal">0</b></span><input id="fxBrightness" type="range" min="-100" max="100" value="0" /></label>
-              <label class="fx-field"><span>Contrast <b id="fxContrastVal">0</b></span><input id="fxContrast" type="range" min="-100" max="100" value="0" /></label>
-              <label class="fx-field"><span>Saturation <b id="fxSaturationVal">0</b></span><input id="fxSaturation" type="range" min="-100" max="100" value="0" /></label>
-              <label class="check-inline"><input id="fxInvert" type="checkbox" /> <span class="hint">Invert colors</span></label>
-              <label class="check-inline"><input id="fxGrayscale" type="checkbox" /> <span class="hint">Grayscale input</span></label>
+            <!-- EFFECTS STACK -->
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">effects stack</div>
+              <div class="fx-pnl-b">
+                <div id="fxStack" class="fx-stack"></div>
+                <div class="fx-add">
+                  <select id="fxAdd">
+                    <option value="">add effect…</option>
+                    <optgroup label="core">
+                      <option value="dither">dither</option>
+                      <option value="ascii">ascii</option>
+                      <option value="halftone">halftone</option>
+                      <option value="posterize">posterize</option>
+                      <option value="pixel">pixelate</option>
+                      <option value="threshold">threshold</option>
+                    </optgroup>
+                    <optgroup label="glitch">
+                      <option value="rgbshift">rgb shift</option>
+                      <option value="scanglitch">scan glitch</option>
+                      <option value="slice">slice displace</option>
+                    </optgroup>
+                    <optgroup label="atmosphere">
+                      <option value="grain">film grain</option>
+                      <option value="crt">crt / scanlines</option>
+                      <option value="vignette">vignette</option>
+                      <option value="chromatic">chromatic</option>
+                      <option value="glow">bloom / glow</option>
+                    </optgroup>
+                    <optgroup label="distort">
+                      <option value="blur">blur</option>
+                      <option value="edge">edge detect</option>
+                      <option value="emboss">emboss</option>
+                    </optgroup>
+                  </select>
+                  <button id="fxAddBtn" class="fx-btn">add</button>
+                </div>
+                <div class="fx-btn-row fx-stack-foot">
+                  <button id="fxClear" class="fx-btn">clear all</button>
+                  <div class="fx-presets-wrap">
+                    <button id="fxPresetBtn" class="fx-btn" type="button">presets ▾</button>
+                    <div id="fxPresetMenu" class="fx-presets-menu hidden"></div>
+                  </div>
+                </div>
+              </div>
             </div>
+
+            <!-- PARAMS -->
+            <div class="fx-pnl">
+              <div class="fx-pnl-h" id="fxParamsTitle">params</div>
+              <div class="fx-pnl-b">
+                <div id="fxParams" class="fx-params"><p class="hint">Select an effect to edit its parameters.</p></div>
+              </div>
+            </div>
+
+            <!-- COLOR / PALETTE -->
+            <div class="fx-pnl">
+              <div class="fx-pnl-h">color / palette</div>
+              <div class="fx-pnl-b">
+                <div class="fx-field"><span>palette size</span><div id="fxPalSize" class="fx-seg fx-pal-size"></div></div>
+                <div class="fx-field"><span>swatches</span><div id="fxSwatches" class="fx-swatches"></div></div>
+                <div class="fx-field"><span>presets</span><div id="fxPalPresets" class="fx-pal-presets"></div></div>
+
+                <div class="fx-sub-h">adjust</div>
+                <label class="fx-field"><span>brightness <b id="fxBrightnessVal">0</b></span><input id="fxBrightness" class="perf-range" type="range" min="-100" max="100" value="0" /></label>
+                <label class="fx-field"><span>contrast <b id="fxContrastVal">0</b></span><input id="fxContrast" class="perf-range" type="range" min="-100" max="100" value="0" /></label>
+                <label class="fx-field"><span>saturation <b id="fxSaturationVal">0</b></span><input id="fxSaturation" class="perf-range" type="range" min="-100" max="100" value="0" /></label>
+                <label class="check-inline"><input id="fxInvert" type="checkbox" /> <span class="hint">invert colors</span></label>
+                <label class="check-inline"><input id="fxGrayscale" type="checkbox" /> <span class="hint">grayscale input</span></label>
+              </div>
+            </div>
+
           </div>
           <div class="fx-main">
             <div id="fxStage" class="fx-stage">

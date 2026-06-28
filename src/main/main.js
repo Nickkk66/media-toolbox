@@ -5,7 +5,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 
 const ffmpegPath = require('./ffmpeg/ffmpegPath');
-const { registerIpc } = require('./ipc');
+const { registerIpc, cleanupFpsTemp } = require('./ipc');
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -61,6 +61,9 @@ if (!gotLock) {
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
 }
+
+// Delete the FPS-changer preview temp cache on quit so previews never linger.
+app.on('before-quit', () => { try { cleanupFpsTemp(); } catch { /* */ } });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 

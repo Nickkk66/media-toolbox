@@ -142,7 +142,7 @@ const TOOL_CATEGORIES = [
       { id: 'crop-video', label: 'Crop Video', engine: 'op', mediaType: 'videoop', op: 'crop', accept: VIDEO, tags: ['crop', 'cut', 'frame', 'aspect', 'video', 'trim edges'] },
       { id: 'stretch-video', label: 'Stretch Video', engine: 'stretch', accept: VIDEO, tags: ['stretch', 'resize', 'resolution', 'squeeze', 'aspect', 'video', 'downscale', 'downscaler', 'reduce resolution'] },
       { id: 'video-speed', label: 'Video Speed', engine: 'op', mediaType: 'videoop', op: 'speed', accept: VIDEO, tags: ['speed', 'slow motion', 'fast', 'slowmo', 'timelapse', 'tempo', 'video'] },
-      { id: 'fps-changer', label: 'FPS Changer', engine: 'op', mediaType: 'videoop', op: 'fps', accept: VIDEO, tags: ['fps', 'frame rate', 'framerate', 'smooth', 'interpolate', '60fps', 'video'] },
+      { id: 'fps-changer', label: 'FPS Changer', engine: 'fpspreview', accept: VIDEO, tags: ['fps', 'frame rate', 'framerate', 'smooth', 'interpolate', '60fps', 'video'] },
       { id: 'stabilize-video', label: 'Video Stabilizer', engine: 'op', mediaType: 'videoop', op: 'stabilize', accept: VIDEO, tags: ['stabilize', 'stabilizer', 'shaky', 'smooth', 'steady', 'deshake', 'video'] },
     ],
   },
@@ -186,7 +186,7 @@ const TOOL_CATEGORIES = [
       { id: 'unit-converter', label: 'Unit Converter', engine: 'special', tags: ['unit', 'measure', 'length', 'weight', 'temperature', 'convert'] },
       { id: 'time-converter', label: 'Time Converter', engine: 'special', tags: ['time', 'timezone', 'unix', 'timestamp', 'clock', 'convert'] },
       { id: 'archive-converter', label: 'Archive Converter', engine: 'special', need: 'hasSevenzip', tags: ['archive', 'zip', '7z', 'tar', 'compress', 'extract'] },
-      { id: 'batch-rename', label: 'Batch Rename', engine: 'batchrename', tags: ['batch', 'rename', 'bulk', 'sequential', 'numbering', 'find replace', 'files'] },
+      { id: 'batch-rename', label: 'Batch Rename', engine: 'batchrename', tags: ['mass', 'mass renamer', 'mass rename', 'rename', 'batch', 'bulk', 'bulk rename', 'rename multiple', 'rename files', 'sequential', 'numbering', 'find replace', 'files'] },
     ],
   },
 ];

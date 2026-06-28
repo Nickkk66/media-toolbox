@@ -25,6 +25,17 @@ function uniqueOutput(outputDir, baseName, ext, convert) {
   return candidate;
 }
 
+// Temp dir for FPS-changer preview renders. Lives under the OS temp folder and
+// is wiped on app quit (see main.js) so previews never linger.
+function fpsTempDir() {
+  return path.join(app.getPath('temp'), 'mtb-fps-preview');
+}
+
+// Remove the FPS preview cache dir (called on quit and before each new render).
+function cleanupFpsTemp() {
+  try { fs.rmSync(fpsTempDir(), { recursive: true, force: true }); } catch { /* */ }
+}
+
 function allExtensions() {
   const set = new Set();
   for (const mod of Object.values(media.MODULES)) {
@@ -204,6 +215,87 @@ function registerIpc(getWindow) {
       }
     }
     return { results };
+  });
+
+  // ---- FPS Changer preview workflow ----
+  // Render to a TEMP cache file so the user can preview before exporting. We
+  // spawn ffmpeg directly (rather than going through the queue) so the renderer
+  // gets a dedicated 'fps:progress' stream and a temp path it can play inline.
+  const { spawn } = require('child_process');
+  let fpsProc = null;
+
+  ipcMain.handle('fps:render', async (_e, { inputPath, fps, interpolate }) => {
+    if (!inputPath) throw new Error('No input file.');
+    const target = Math.min(240, Math.max(1, Number(fps) || 30));
+    const dir = fpsTempDir();
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
+
+    // Probe duration up front so we can report determinate progress.
+    let durationSec = 0;
+    try {
+      durationSec = await new Promise((resolve) => {
+        execFile(ffmpegPath.ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', inputPath],
+          { windowsHide: true }, (err, stdout) => resolve(err ? 0 : parseFloat(String(stdout).trim()) || 0));
+      });
+    } catch { durationSec = 0; }
+
+    // One temp file per render; the previous one is removed first.
+    cleanupFpsTemp();
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
+    const tempPath = path.join(dir, `preview_${Date.now()}.mp4`);
+
+    const args = ['-y', '-hide_banner', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats', '-i', inputPath];
+    if (interpolate) {
+      args.push('-filter:v', `minterpolate=fps=${target}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir`);
+    } else {
+      args.push('-r', String(target));
+    }
+    args.push('-c:v', 'libx264', '-crf', '20', '-preset', 'medium', '-c:a', 'copy', '-movflags', '+faststart', tempPath);
+
+    // Kill any in-flight preview render before starting a new one.
+    if (fpsProc) { try { fpsProc.kill('SIGKILL'); } catch { /* */ } fpsProc = null; }
+
+    return await new Promise((resolve, reject) => {
+      let stderrTail = '';
+      const proc = spawn(ffmpegPath.ffmpeg, args, { windowsHide: true });
+      fpsProc = proc;
+
+      // Parse '-progress' key=value output for out_time/percent.
+      proc.stdout.on('data', (buf) => {
+        const text = buf.toString();
+        const m = /out_time_ms=(\d+)/.exec(text);
+        if (m && durationSec > 0) {
+          const sec = Number(m[1]) / 1e6;
+          const percent = Math.max(0, Math.min(99.5, (sec / durationSec) * 100));
+          send('fps:progress', { percent });
+        } else {
+          send('fps:progress', { indeterminate: true });
+        }
+      });
+      proc.stderr.on('data', (b) => { stderrTail = (stderrTail + b.toString()).slice(-2000); });
+      proc.on('error', (err) => { fpsProc = null; reject(new Error(err.message)); });
+      proc.on('close', (code) => {
+        fpsProc = null;
+        if (code === 0 && fs.existsSync(tempPath)) {
+          send('fps:progress', { percent: 100 });
+          resolve({ tempPath });
+        } else {
+          try { fs.unlinkSync(tempPath); } catch { /* */ }
+          reject(new Error((stderrTail || 'ffmpeg failed').split('\n').filter(Boolean).pop() || 'Render failed.'));
+        }
+      });
+    });
+  });
+
+  // Copy the previewed temp file to the chosen output dir as a unique MTB_ file.
+  ipcMain.handle('fps:export', async (_e, { tempPath, outputDir }) => {
+    if (!tempPath || !fs.existsSync(tempPath)) throw new Error('No preview to export.');
+    const dir = resolveOutputDir({ outputDir }, path.dirname(tempPath));
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
+    const out = uniqueOutput(dir, 'fps', 'mp4', true);
+    fs.copyFileSync(tempPath, out);
+    let outSize = 0; try { outSize = fs.statSync(out).size; } catch { /* */ }
+    return { outputPath: out, outSize };
   });
 
   ipcMain.handle('job:cancel', (_e, jobId) => { queue.cancel(jobId); return true; });
@@ -418,35 +510,8 @@ function registerIpc(getWindow) {
   ipcMain.handle('settings:set', (_e, patch) => settings.save(patch));
   ipcMain.handle('settings:reset', () => ({ ...settings.reset(), cores: settings.cores }));
 
-  // Export current settings to a JSON file the user picks.
-  ipcMain.handle('settings:export', async () => {
-    const { canceled, filePath } = await dialog.showSaveDialog({
-      title: 'Export settings',
-      defaultPath: path.join(app.getPath('downloads'), 'media-toolbox-settings.json'),
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (canceled || !filePath) return { ok: false };
-    const data = { ...settings.load() };
-    delete data.cores; // runtime-only
-    try { fs.writeFileSync(filePath, JSON.stringify(data, null, 2)); return { ok: true, filePath }; }
-    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
-  });
-
-  // Import settings from a JSON file the user picks; merges via save().
-  ipcMain.handle('settings:import', async () => {
-    const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: 'Import settings',
-      properties: ['openFile'],
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (canceled || !filePaths || !filePaths[0]) return { ok: false };
-    try {
-      const parsed = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
-      if (!parsed || typeof parsed !== 'object') return { ok: false, error: 'invalid file' };
-      delete parsed.cores;
-      return { ok: true, settings: { ...settings.save(parsed), cores: settings.cores } };
-    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
-  });
+  // Debug: open Chromium DevTools in a detached window for troubleshooting.
+  ipcMain.handle('app:openDevTools', () => { const w = getWindow(); if (w) w.webContents.openDevTools({ mode: 'detach' }); });
 
   // Clear locally cached/temp data. We only remove our own scratch caches.
   ipcMain.handle('settings:clearCache', () => {
@@ -459,4 +524,4 @@ function registerIpc(getWindow) {
   });
 }
 
-module.exports = { registerIpc };
+module.exports = { registerIpc, cleanupFpsTemp };

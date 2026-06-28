@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('api', {
   resumeJob: (jobId) => ipcRenderer.invoke('job:resume', jobId),
   deleteFile: (p) => ipcRenderer.invoke('fs:delete', p),
   filesRename: (renames) => ipcRenderer.invoke('files:rename', renames),
+
+  // FPS Changer preview workflow
+  fpsRender: (opts) => ipcRenderer.invoke('fps:render', opts),
+  fpsExport: (opts) => ipcRenderer.invoke('fps:export', opts),
+  onFpsProgress: (cb) => ipcRenderer.on('fps:progress', (_e, d) => cb(d)),
   newWindow: () => ipcRenderer.invoke('win:new'),
   onSecondInstance: (cb) => ipcRenderer.on('app:second-instance', () => cb()),
   metaRead: (inputPath) => ipcRenderer.invoke('meta:read', inputPath),
@@ -45,9 +50,8 @@ contextBridge.exposeInMainWorld('api', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (s) => ipcRenderer.invoke('settings:set', s),
   resetSettings: () => ipcRenderer.invoke('settings:reset'),
-  exportSettings: () => ipcRenderer.invoke('settings:export'),
-  importSettings: () => ipcRenderer.invoke('settings:import'),
   clearCache: () => ipcRenderer.invoke('settings:clearCache'),
+  openDevTools: () => ipcRenderer.invoke('app:openDevTools'),
 
   onJobProgress: (cb) => ipcRenderer.on('job:progress', (_e, d) => cb(d)),
   onJobDone: (cb) => ipcRenderer.on('job:done', (_e, d) => cb(d)),

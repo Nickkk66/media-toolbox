@@ -61,7 +61,7 @@ function customSelect(sel) {
 function enhanceSelects(root) { (root || document).querySelectorAll('select:not([data-cs])').forEach(customSelect); }
 function setHero(title, sub) { $('heroTitle').textContent = title; $('heroSub').textContent = sub; }
 
-const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel'];
+const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel'];
 function hideAll() {
   PANELS.forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
   document.body.classList.remove('on-profile');
@@ -185,6 +185,7 @@ function openItem(item, kind) {
   if (item.engine === 'special') return openSpecial(item.id);
   if (item.engine === 'colorpicker') return openColorPicker();
   if (item.engine === 'stretch') return openStretch();
+  if (item.engine === 'fpspreview') return openFpsPreview();
   if (item.engine === 'metaedit') return openMetaEditor();
   if (item.engine === 'batchrename') return openBatchRename();
   if (item.engine === 'photofx') return openPhotoEffects();
@@ -456,13 +457,19 @@ const FX_EFFECT_DEFS = {
 const FX_PRESET_STACKS = [
   { name: 'mac classic', stack: [{ type: 'dither', params: { algorithm: 'atkinson', scale: 2, strength: 1 } }] },
   { name: 'newspaper', stack: [{ type: 'halftone', params: { dotSize: 6, angle: 15, shape: 'circle', spacing: 1, contrast: 1.2 } }] },
-  { name: 'game boy', stack: [{ type: 'pixel', params: { size: 4, usePalette: true } }, { type: 'dither', params: { algorithm: 'bayer4', scale: 1, strength: 1 } }], palette: 'game boy' },
+  { name: 'gameboy', stack: [{ type: 'pixel', params: { size: 4, usePalette: true } }, { type: 'dither', params: { algorithm: 'bayer4', scale: 1, strength: 1 } }], palette: 'game boy' },
   { name: 'vhs horror', stack: [{ type: 'chromatic', params: { amount: 4, radial: true } }, { type: 'scanglitch', params: { intensity: 25, frequency: 10 } }, { type: 'crt', params: { scanlines: 3, stripes: true, vignette: 0.5 } }] },
+  { name: 'print zine', stack: [{ type: 'threshold', params: { level: 128, smooth: 10 } }, { type: 'halftone', params: { dotSize: 5, angle: 45, shape: 'circle', spacing: 1, contrast: 1.4 } }, { type: 'grain', params: { amount: 14, size: 1, mono: true } }], palette: 'paper' },
   { name: 'ascii art', stack: [{ type: 'ascii', params: { density: 120, charset: 'dense', colored: true, bold: true } }] },
   { name: 'glitched', stack: [{ type: 'rgbshift', params: { amount: 6, angle: 45 } }, { type: 'slice', params: { slices: 15, maxOffset: 20 } }] },
   { name: 'oil painting', stack: [{ type: 'posterize', params: { levels: 5, usePalette: false } }, { type: 'edge', params: { strength: 0.5, invert: true } }, { type: 'blur', params: { radius: 2 } }] },
+  { name: 'riso print', stack: [{ type: 'posterize', params: { levels: 3, usePalette: true } }, { type: 'dither', params: { algorithm: 'bayer8', scale: 2, strength: 0.8 } }, { type: 'grain', params: { amount: 10, size: 1, mono: false } }], palette: 'neon' },
   { name: 'dream soft', stack: [{ type: 'glow', params: { threshold: 150, amount: 0.8, radius: 15 } }, { type: 'chromatic', params: { amount: 3, radial: true } }, { type: 'vignette', params: { amount: 0.4, softness: 0.7 } }] },
 ];
+
+// Hand-authored eye-open / eye-closed icons for the per-effect enable toggle.
+const FX_EYE_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 12S5 5 12 5s10.5 7 10.5 7-3.5 7-10.5 7S1.5 12 1.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const FX_EYE_CLOSED = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7c1.6 0 3 .3 4.3.9"/><path d="M22 12s-1.2 2.4-3.6 4.4"/><path d="M9.5 9.6A3 3 0 0 0 12 15a3 3 0 0 0 2.4-1.2"/><line x1="3" y1="3" x2="21" y2="21"/></svg>';
 
 const fxState = {
   wired: false,
@@ -495,22 +502,26 @@ function openPhotoEffects() {
   $('fxPanel').classList.remove('hidden');
   if (!fxState.wired) { wirePhotoEffects(); fxState.wired = true; }
   fxRenderStack(); fxRenderParams();
+  // Load the demo scene by default so effects are visible immediately.
+  if (!fxState.source) fxLoadDemo();
 }
 
 function wirePhotoEffects() {
   fxCanvas = $('fxCanvas'); fxCtx = fxCanvas.getContext('2d', { willReadFrequently: true });
   fxWork = document.createElement('canvas'); fxWorkCtx = fxWork.getContext('2d', { willReadFrequently: true });
 
-  // Populate preset + palette selects, then enhance them into custom dropdowns.
-  $('fxPreset').innerHTML = '<option value="">Choose a preset stack…</option>' + FX_PRESET_STACKS.map((p, i) => `<option value="${i}">${mtbEsc(p.name)}</option>`).join('');
-  $('fxPalPreset').innerHTML = '<option value="">Palette preset…</option>' + FX_PALETTE_PRESETS.map((p, i) => `<option value="${i}">${mtbEsc(p.name)}</option>`).join('');
   enhanceSelects($('fxPanel'));
   fxBuildSwatches();
+  fxBuildPalSize();
+  fxBuildPalPresets();
+  fxBuildPresetMenu();
 
   $('fxLoad').addEventListener('click', async () => {
     const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
     fxLoadImagePath(paths[0]);
   });
+  $('fxLoadVid').addEventListener('click', fxLoadVideoFrame);
+  $('fxWebcam').addEventListener('click', fxUseWebcam);
   $('fxDemo').addEventListener('click', () => fxLoadDemo());
   $('fxClear').addEventListener('click', () => { fxState.effects = []; fxState.selectedId = null; fxRenderStack(); fxRenderParams(); fxRender(); });
 
@@ -523,26 +534,20 @@ function wirePhotoEffects() {
     fxRenderStack(); fxRenderParams(); fxRender();
   });
 
-  $('fxPreset').addEventListener('change', (e) => {
-    const idx = e.target.value; if (idx === '') return;
-    const preset = FX_PRESET_STACKS[Number(idx)];
-    fxState.effects = preset.stack.map((s) => ({ id: fxState.nextId++, type: s.type, enabled: true, params: { ...FX_EFFECT_DEFS[s.type].defaults, ...s.params } }));
-    fxState.selectedId = fxState.effects[0] ? fxState.effects[0].id : null;
-    if (preset.palette) { const pp = FX_PALETTE_PRESETS.find((p) => p.name === preset.palette); if (pp) { fxState.palette = [...pp.colors]; fxBuildSwatches(); } }
-    e.target.value = ''; if (e.target._csRender) e.target._csRender();
-    fxRenderStack(); fxRenderParams(); fxRender();
+  // presets ▾ dropdown menu
+  $('fxPresetBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    $('fxPresetMenu').classList.toggle('hidden');
   });
-
-  $('fxPalPreset').addEventListener('change', (e) => {
-    const idx = e.target.value; if (idx === '') return;
-    fxState.palette = [...FX_PALETTE_PRESETS[Number(idx)].colors];
-    e.target.value = ''; if (e.target._csRender) e.target._csRender();
-    fxBuildSwatches(); fxRender();
+  document.addEventListener('click', (e) => {
+    const m = $('fxPresetMenu');
+    if (m && !m.classList.contains('hidden') && !e.target.closest('.fx-presets-wrap')) m.classList.add('hidden');
   });
 
   ['brightness', 'contrast', 'saturation'].forEach((k) => {
     const id = 'fx' + k.charAt(0).toUpperCase() + k.slice(1);
-    $(id).addEventListener('input', (e) => { fxState[k] = parseInt(e.target.value, 10); $(id + 'Val').textContent = fxState[k]; fxRender(); });
+    $(id).addEventListener('input', (e) => { fxState[k] = parseInt(e.target.value, 10); $(id + 'Val').textContent = fxState[k]; fxRenderDebounced(); });
+    $(id).addEventListener('change', () => fxRenderFlush());
   });
   $('fxInvert').addEventListener('change', (e) => { fxState.invert = e.target.checked; fxRender(); });
   $('fxGrayscale').addEventListener('change', (e) => { fxState.grayscale = e.target.checked; fxRender(); });
@@ -585,16 +590,166 @@ function fxLoadDemo() {
   img.src = c.toDataURL();
 }
 
-function fxBuildSwatches() {
-  const wrap = $('fxSwatches'); wrap.innerHTML = '';
-  fxState.palette.forEach((color, i) => {
-    const inp = document.createElement('input');
-    inp.type = 'color'; inp.value = color; inp.className = 'fx-swatch';
-    inp.addEventListener('input', (e) => { fxState.palette[i] = e.target.value; fxRender(); });
-    wrap.appendChild(inp);
+function fxApplyPreset(preset) {
+  fxState.effects = preset.stack.map((s) => ({ id: fxState.nextId++, type: s.type, enabled: true, params: { ...FX_EFFECT_DEFS[s.type].defaults, ...s.params } }));
+  fxState.selectedId = fxState.effects[0] ? fxState.effects[0].id : null;
+  if (preset.palette) { const pp = FX_PALETTE_PRESETS.find((p) => p.name === preset.palette); if (pp) { fxState.palette = [...pp.colors]; fxBuildSwatches(); fxBuildPalSize(); fxBuildPalPresets(); } }
+  fxRenderStack(); fxRenderParams(); fxRender();
+}
+
+function fxBuildPresetMenu() {
+  const menu = $('fxPresetMenu'); if (!menu) return;
+  menu.innerHTML = '';
+  FX_PRESET_STACKS.forEach((p) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'fx-preset-opt'; b.textContent = p.name;
+    b.addEventListener('click', () => { fxApplyPreset(p); menu.classList.add('hidden'); });
+    menu.appendChild(b);
   });
-  // size controls: 2..6 colors
-  const ctl = document.createElement('div'); ctl.className = 'fx-pal-size';
+}
+
+function fxBuildSwatches() {
+  const wrap = $('fxSwatches'); if (!wrap) return; wrap.innerHTML = '';
+  fxState.palette.forEach((color, i) => {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'fx-swatch';
+    btn.style.background = color; btn.title = color;
+    btn.setAttribute('aria-label', 'palette color ' + (i + 1));
+    btn.addEventListener('click', (e) => { e.stopPropagation(); fxOpenColorPicker(btn, i); });
+    wrap.appendChild(btn);
+  });
+}
+
+// ----- custom in-app color picker (no OS dialog) -----
+const fxCP = { el: null, idx: -1, swatch: null, h: 0, s: 0, v: 0, onDoc: null };
+
+function fxClampN(n, lo, hi) { return n < lo ? lo : n > hi ? hi : n; }
+function fxRgbToHex(r, g, b) {
+  const h = (n) => fxClampN(Math.round(n), 0, 255).toString(16).padStart(2, '0');
+  return '#' + h(r) + h(g) + h(b);
+}
+function fxRgbToHsv(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60; if (h < 0) h += 360;
+  }
+  const s = max ? d / max : 0;
+  return [h, s, max];
+}
+function fxHsvToRgb(h, s, v) {
+  const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; } else if (h < 240) { g = x; b = c; }
+  else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+  return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+}
+function fxCpCurrentHex() {
+  const [r, g, b] = fxHsvToRgb(fxCP.h, fxCP.s, fxCP.v);
+  return fxRgbToHex(r, g, b);
+}
+function fxCpSyncUi() {
+  const hex = fxCpCurrentHex();
+  const [hr, hg, hb] = fxHsvToRgb(fxCP.h, 1, 1);
+  fxCP.el.querySelector('.fx-cp-sv').style.background =
+    `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, rgb(${hr},${hg},${hb}))`;
+  const cur = fxCP.el.querySelector('.fx-cp-cursor');
+  cur.style.left = (fxCP.s * 100) + '%';
+  cur.style.top = ((1 - fxCP.v) * 100) + '%';
+  fxCP.el.querySelector('.fx-cp-hue').value = Math.round(fxCP.h);
+  fxCP.el.querySelector('.fx-cp-preview').style.background = hex;
+  const hexInp = fxCP.el.querySelector('.fx-cp-hex');
+  if (document.activeElement !== hexInp) hexInp.value = hex;
+}
+function fxCpCommit() {
+  const hex = fxCpCurrentHex();
+  fxState.palette[fxCP.idx] = hex;
+  if (fxCP.swatch) { fxCP.swatch.style.background = hex; fxCP.swatch.title = hex; }
+  fxRenderDebounced();
+}
+function fxCloseColorPicker() {
+  if (!fxCP.el) return;
+  if (fxCP.onDoc) document.removeEventListener('mousedown', fxCP.onDoc, true);
+  fxCP.el.remove();
+  fxCP.el = null; fxCP.idx = -1; fxCP.swatch = null; fxCP.onDoc = null;
+  fxRenderFlush();
+}
+function fxOpenColorPicker(swatch, idx) {
+  fxCloseColorPicker();
+  fxCP.idx = idx; fxCP.swatch = swatch;
+  const [r, g, b] = fxHexToRgb(fxState.palette[idx] || '#888888');
+  [fxCP.h, fxCP.s, fxCP.v] = fxRgbToHsv(r, g, b);
+
+  const pop = document.createElement('div');
+  pop.className = 'fx-cp';
+  pop.innerHTML =
+    '<div class="fx-cp-sv"><div class="fx-cp-cursor"></div></div>' +
+    '<div class="fx-cp-row">' +
+      '<div class="fx-cp-preview"></div>' +
+      '<input type="range" class="perf-range fx-cp-hue" min="0" max="360" step="1" />' +
+    '</div>' +
+    '<div class="fx-cp-row">' +
+      '<input type="text" class="fx-cp-hex" maxlength="7" spellcheck="false" />' +
+      '<button type="button" class="fx-cp-done">done</button>' +
+    '</div>';
+  pop.addEventListener('mousedown', (e) => e.stopPropagation());
+  pop.addEventListener('click', (e) => e.stopPropagation());
+  document.body.appendChild(pop);
+  fxCP.el = pop;
+
+  const rect = swatch.getBoundingClientRect();
+  pop.style.visibility = 'hidden';
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let left = rect.left, top = rect.bottom + 6;
+  if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+  if (top + ph > window.innerHeight - 8) top = rect.top - ph - 6;
+  pop.style.left = Math.max(8, left) + 'px';
+  pop.style.top = Math.max(8, top) + 'px';
+  pop.style.visibility = '';
+
+  const sv = pop.querySelector('.fx-cp-sv');
+  const svPick = (ev) => {
+    const r2 = sv.getBoundingClientRect();
+    fxCP.s = fxClampN((ev.clientX - r2.left) / r2.width, 0, 1);
+    fxCP.v = fxClampN(1 - (ev.clientY - r2.top) / r2.height, 0, 1);
+    fxCpSyncUi(); fxCpCommit();
+  };
+  sv.addEventListener('mousedown', (ev) => {
+    svPick(ev);
+    const move = (e2) => svPick(e2);
+    const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+    document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  });
+
+  pop.querySelector('.fx-cp-hue').addEventListener('input', (e) => {
+    fxCP.h = parseInt(e.target.value, 10); fxCpSyncUi(); fxCpCommit();
+  });
+
+  const hexInp = pop.querySelector('.fx-cp-hex');
+  hexInp.addEventListener('input', () => {
+    let v = hexInp.value.trim(); if (v[0] !== '#') v = '#' + v;
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+      const [hr, hg, hb] = fxHexToRgb(v);
+      [fxCP.h, fxCP.s, fxCP.v] = fxRgbToHsv(hr, hg, hb);
+      fxCpSyncUi(); fxCpCommit();
+    }
+  });
+  hexInp.addEventListener('keydown', (e) => { if (e.key === 'Enter') fxCloseColorPicker(); });
+
+  pop.querySelector('.fx-cp-done').addEventListener('click', fxCloseColorPicker);
+
+  fxCP.onDoc = (e) => { if (fxCP.el && !fxCP.el.contains(e.target)) fxCloseColorPicker(); };
+  document.addEventListener('mousedown', fxCP.onDoc, true);
+
+  fxCpSyncUi();
+}
+
+function fxBuildPalSize() {
+  const ctl = $('fxPalSize'); if (!ctl) return; ctl.innerHTML = '';
   [2, 3, 4, 5, 6].forEach((n) => {
     const b = document.createElement('button'); b.type = 'button'; b.textContent = n === 2 ? '1-bit' : String(n);
     b.className = 'fx-seg-btn' + (fxState.palette.length === n ? ' on' : '');
@@ -602,11 +757,60 @@ function fxBuildSwatches() {
       const cur = fxState.palette.slice();
       const next = [];
       for (let i = 0; i < n; i++) next.push(cur[i] || '#888888');
-      fxState.palette = next; fxBuildSwatches(); fxRender();
+      fxState.palette = next; fxBuildSwatches(); fxBuildPalSize(); fxRender();
     });
     ctl.appendChild(b);
   });
-  wrap.appendChild(ctl);
+}
+
+function fxBuildPalPresets() {
+  const grid = $('fxPalPresets'); if (!grid) return; grid.innerHTML = '';
+  FX_PALETTE_PRESETS.forEach((p) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'fx-pal-preset'; b.title = p.name;
+    b.innerHTML = p.colors.map((c) => `<i style="background:${mtbEsc(c)}"></i>`).join('') + `<u>${mtbEsc(p.name)}</u>`;
+    b.addEventListener('click', () => {
+      fxState.palette = [...p.colors];
+      fxBuildSwatches(); fxBuildPalSize(); fxRender();
+    });
+    grid.appendChild(b);
+  });
+}
+
+function fxLoadVideoFrame() {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'video/*';
+  inp.onchange = () => {
+    const file = inp.files && inp.files[0]; if (!file) return;
+    const url = URL.createObjectURL(file);
+    const vid = document.createElement('video'); vid.muted = true; vid.src = url;
+    vid.onloadeddata = () => {
+      vid.currentTime = Math.min(0.1, vid.duration || 0.1);
+      vid.onseeked = () => {
+        const c = document.createElement('canvas'); c.width = vid.videoWidth; c.height = vid.videoHeight;
+        c.getContext('2d').drawImage(vid, 0, 0);
+        const img = new Image();
+        img.onload = () => { fxState.source = img; $('fxName').textContent = file.name; $('fxHint').classList.add('hidden'); $('fxSave').disabled = false; fxRender(); URL.revokeObjectURL(url); };
+        img.src = c.toDataURL();
+      };
+    };
+  };
+  inp.click();
+}
+
+async function fxUseWebcam() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const vid = document.createElement('video'); vid.muted = true; vid.srcObject = stream;
+    await vid.play();
+    await new Promise((r) => setTimeout(r, 350));
+    const c = document.createElement('canvas'); c.width = vid.videoWidth || 640; c.height = vid.videoHeight || 480;
+    c.getContext('2d').drawImage(vid, 0, 0, c.width, c.height);
+    stream.getTracks().forEach((t) => t.stop());
+    const img = new Image();
+    img.onload = () => { fxState.source = img; $('fxName').textContent = 'webcam frame'; $('fxHint').classList.add('hidden'); $('fxSave').disabled = false; fxRender(); };
+    img.src = c.toDataURL();
+  } catch (err) {
+    $('fxStatus').textContent = 'webcam unavailable';
+  }
 }
 
 function fxRenderStack() {
@@ -616,9 +820,9 @@ function fxRenderStack() {
     const def = FX_EFFECT_DEFS[fx.type]; if (!def) return;
     const item = document.createElement('div');
     item.className = 'fx-stack-item' + (fx.id === fxState.selectedId ? ' selected' : '') + (fx.enabled ? '' : ' disabled');
-    item.innerHTML = `<span class="fx-stack-name">${mtbEsc(def.name)}</span>
+    item.innerHTML = `<button class="fx-eye" data-act="toggle" title="${fx.enabled ? 'disable' : 'enable'}">${fx.enabled ? FX_EYE_OPEN : FX_EYE_CLOSED}</button>
+      <span class="fx-stack-name">${mtbEsc(def.name)}</span>
       <span class="fx-stack-actions">
-        <button data-act="toggle" title="${fx.enabled ? 'disable' : 'enable'}">${fx.enabled ? '●' : '○'}</button>
         <button data-act="up" title="move up">▲</button>
         <button data-act="down" title="move down">▼</button>
         <button data-act="remove" title="remove">✕</button>
@@ -641,9 +845,11 @@ function fxRenderStack() {
 
 function fxRenderParams() {
   const wrap = $('fxParams');
+  const title = $('fxParamsTitle');
   const fx = fxState.effects.find((f) => f.id === fxState.selectedId);
-  if (!fx) { wrap.innerHTML = '<p class="hint">Select an effect to edit its parameters.</p>'; return; }
+  if (!fx) { if (title) title.textContent = 'params'; wrap.innerHTML = '<p class="hint">Select an effect to edit its parameters.</p>'; return; }
   const def = FX_EFFECT_DEFS[fx.type];
+  if (title) title.textContent = 'params / ' + def.name;
   const ctrls = def.params(fx.params);
   wrap.innerHTML = ctrls.map((c) => fxControlHtml(c, fx.params[c.key])).join('');
   enhanceSelects(wrap);
@@ -658,7 +864,7 @@ function fxFmtVal(c, v) {
 function fxControlHtml(c, v) {
   if (c.kind === 'range') {
     return `<label class="fx-field"><span>${mtbEsc(c.label)} <b data-valfor="${c.key}">${fxFmtVal(c, v)}</b></span>
-      <input type="range" data-param="${c.key}" min="${c.min}" max="${c.max}" step="${c.step}" value="${v}" /></label>`;
+      <input type="range" class="perf-range" data-param="${c.key}" min="${c.min}" max="${c.max}" step="${c.step}" value="${v}" /></label>`;
   }
   if (c.kind === 'select') {
     return `<label class="fx-field"><span>${mtbEsc(c.label)}</span><select data-param="${c.key}">${c.opts.map(([val, txt]) => `<option value="${mtbEsc(String(val))}" ${String(val) === String(v) ? 'selected' : ''}>${mtbEsc(txt)}</option>`).join('')}</select></label>`;
@@ -682,8 +888,9 @@ function fxAttachParamListeners(wrap, fx) {
         fx.params[key] = step < 1 ? parseFloat(el.value) : parseInt(el.value, 10);
         const def = FX_EFFECT_DEFS[fx.type].params(fx.params).find((c) => c.key === key);
         const b = wrap.querySelector(`[data-valfor="${key}"]`); if (b && def) b.textContent = fxFmtVal(def, fx.params[key]);
-        fxRender();
+        fxRenderDebounced(); // label is live above; defer the heavy canvas render
       });
+      el.addEventListener('change', () => fxRenderFlush()); // ensure final value renders on release
     } else if (el.tagName === 'SELECT') {
       el.addEventListener('change', () => { fx.params[key] = el.value; fxRender(); });
     }
@@ -697,6 +904,19 @@ function fxAttachParamListeners(wrap, fx) {
       fxRender();
     }));
   });
+}
+
+// Debounced canvas re-render: heavy work only fires after the slider has
+// stayed put for ~300ms. Labels update live (cheap) in the callers; only the
+// canvas render is deferred. A trailing call always fires the final value.
+let fxRenderTimer = null;
+function fxRenderDebounced() {
+  if (fxRenderTimer) clearTimeout(fxRenderTimer);
+  fxRenderTimer = setTimeout(() => { fxRenderTimer = null; fxRender(); }, 300);
+}
+function fxRenderFlush() {
+  if (fxRenderTimer) { clearTimeout(fxRenderTimer); fxRenderTimer = null; }
+  fxRender();
 }
 
 // ----- pipeline -----
@@ -1518,8 +1738,26 @@ function wireMetaEditor() {
       renderMetaReadonly();
       renderMetaFileInfo();
       $('meEmpty').classList.add('hidden'); $('meBody').classList.remove('hidden');
+      $('meView').classList.remove('hidden');
     } catch (e) { toast('Could not read metadata', { kind: 'error' }); }
   });
+  // View pop-out: show the loaded media in a full-screen lightbox on demand.
+  const fileUrl = (p) => 'file:///' + String(p).replace(/\\/g, '/').replace(/#/g, '%23').replace(/\?/g, '%3F');
+  const closeLightbox = () => { $('meLightbox').classList.add('hidden'); $('meLightboxStage').innerHTML = ''; };
+  const openLightbox = () => {
+    if (!metaState.path) return;
+    const url = fileUrl(metaState.path);
+    const k = metaState.kind;
+    let el;
+    if (k === 'video') el = `<video class="me-lb-media" src="${mtbEsc(url)}" controls autoplay></video>`;
+    else if (k === 'audio') el = `<audio class="me-lb-audio" src="${mtbEsc(url)}" controls autoplay></audio>`;
+    else el = `<img class="me-lb-media" src="${mtbEsc(url)}" alt="" />`;
+    $('meLightboxStage').innerHTML = el;
+    $('meLightbox').classList.remove('hidden');
+  };
+  $('meView').addEventListener('click', openLightbox);
+  $('meLightbox').addEventListener('click', (e) => { if (e.target === $('meLightbox')) closeLightbox(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('meLightbox').classList.contains('hidden')) closeLightbox(); });
   const collect = () => {
     const t = {};
     document.querySelectorAll('#meFields input[data-mk]').forEach((el) => {
@@ -1950,11 +2188,14 @@ function settingsHtml(cat, s) {
     <h3 class="set-h">about</h3>
     <div class="set-note">media toolbox v${s.appVersion || (state.caps && state.caps.appVersion) || '1.0.0'}</div>
     <h3 class="set-h">settings data</h3>
-    ${actionRow([['setImport', 'import', 'download'], ['setExport', 'export', 'folder'], ['setReset', 'reset', 'trash', true]])}
-    <p class="set-note">import, export, or reset all settings back to their default values.</p>
+    ${actionRow([['setReset', 'reset all settings', 'trash', true]])}
+    <p class="set-note">reset all settings back to their default values.</p>
     <h3 class="set-h">local storage</h3>
     ${actionRow([['setClearCache', 'clear cache', 'trash', true]])}
-    <p class="set-note">clears locally stored app cache/data. this is a destructive action.</p>`;
+    <p class="set-note">clears locally stored app cache/data. this is a destructive action.</p>
+    <h3 class="set-h">debug</h3>
+    ${actionRow([['setDevTools', 'open developer tools', 'search'], ['setDiag', 'copy diagnostics', 'download']])}
+    <p class="set-note">developer tools open chromium devtools for troubleshooting. copy diagnostics puts app version, available binaries, and key paths on your clipboard.</p>`;
 
   return '';
 }
@@ -2005,12 +2246,6 @@ function wireSettingsCat(cat, s) {
     document.querySelectorAll('#settingsContent input[name="dl"]').forEach((r) => r.addEventListener('change', () => persist({ downloadLocation: r.value })));
     const pick = $('dlPick'); if (pick) pick.addEventListener('click', async (e) => { e.preventDefault(); const d = await window.api.pickOutputDir(); if (d) { state._customDir = d; $('dlCustomDesc').textContent = d; const r = document.querySelector('#settingsContent input[name="dl"][value="custom"]'); if (r) r.checked = true; persist({ downloadLocation: 'custom', customDownloadDir: d }); } });
   } else if (cat === 'advanced') {
-    $('setExport').addEventListener('click', async () => { const r = await window.api.exportSettings(); if (r && r.ok) toast('Settings exported', { path: r.filePath }); });
-    $('setImport').addEventListener('click', async () => {
-      const r = await window.api.importSettings();
-      if (r && r.ok && r.settings) { state.settings = r.settings; applyClientSettings(state.settings); toast('Settings imported'); openSettings('advanced'); }
-      else if (r && r.error) toast('Import failed: ' + r.error, { kind: 'error' });
-    });
     $('setReset').addEventListener('click', async () => {
       if (!(await confirmModal('Reset all settings?', 'This will restore every setting to its default value.'))) return;
       state.settings = await window.api.resetSettings();
@@ -2022,6 +2257,21 @@ function wireSettingsCat(cat, s) {
       if (!(await confirmModal('Clear cache?', 'This will remove locally stored cached data.'))) return;
       await window.api.clearCache();
       toast('Cache cleared');
+    });
+    $('setDevTools').addEventListener('click', () => { window.api.openDevTools(); });
+    $('setDiag').addEventListener('click', async () => {
+      const c = state.caps || {};
+      const lines = [
+        `media toolbox v${c.appVersion || s.appVersion || '1.0.0'}`,
+        `platform: ${navigator.platform}`,
+        `ffmpeg: ${c.ffmpeg ? 'available' : 'missing'}`,
+        `ffprobe: ${c.ffprobe ? 'available' : 'missing'}`,
+        `ytdlp: ${c.ytdlp ? 'available' : 'missing'}`,
+        `exiftool: ${c.exiftool ? 'available' : 'missing'}`,
+        c.paths ? `paths: ${JSON.stringify(c.paths)}` : '',
+      ].filter(Boolean);
+      try { await navigator.clipboard.writeText(lines.join('\n')); toast('Diagnostics copied'); }
+      catch { toast('Could not copy diagnostics', { kind: 'error' }); }
     });
   }
   enhanceSelects($('settingsContent'));
@@ -2102,6 +2352,67 @@ function wireStretch() {
       await window.api.startJob({ jobId, mediaType: 'videoop', inputPath: stretch.path, settings: { op: 'stretch', outputFormat: 'mp4', stretchW: w, stretchH: h }, meta: stretch.meta || { durationSec: 0, video: {} }, outputDir: state.outputDir, convert: true });
       state._stretchJob = jobId;
     } catch (e) { $('stStatus').textContent = 'Error: ' + (e.message || e); $('stStatus').className = 'fr-status error'; $('stRender').disabled = false; }
+  });
+}
+
+// ---------- FPS Changer (preview before export) ----------
+// Renders to a temp cache file the user can preview inline, then exports a copy
+// to the chosen output dir. Lazy-wired on first open (like Batch Rename).
+const fpsState = { path: null, tempPath: null, wired: false };
+function openFpsPreview() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'FPS Changer';
+  setHero('FPS Changer', 'Change frame rate — render a preview, watch it, then export');
+  $('fpsPanel').classList.remove('hidden');
+  if (!fpsState.wired) { wireFpsPreview(); fpsState.wired = true; }
+}
+function wireFpsPreview() {
+  // Live progress for the temp render.
+  window.api.onFpsProgress((d) => {
+    if (!d) return;
+    $('fpsProgress').classList.remove('hidden');
+    if (d.indeterminate) { $('fpsBar').classList.add('indet'); $('fpsStatus').textContent = 'Rendering…'; }
+    else { $('fpsBar').classList.remove('indet'); $('fpsBar').style.width = `${(d.percent || 0).toFixed(1)}%`; $('fpsStatus').textContent = `Rendering… ${(d.percent || 0).toFixed(0)}%`; }
+    $('fpsStatus').className = 'fr-status';
+  });
+  $('fpsLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
+    fpsState.path = paths[0]; fpsState.tempPath = null;
+    $('fpsName').textContent = baseName(paths[0]);
+    const v = $('fpsVideo'); v.src = 'file:///' + paths[0].replace(/\\/g, '/'); v.play().catch(() => {});
+    $('fpsRender').disabled = false; $('fpsExport').disabled = true;
+    $('fpsProgress').classList.add('hidden'); $('fpsStatus').textContent = '';
+  });
+  $('fpsRender').addEventListener('click', async () => {
+    if (!fpsState.path) return;
+    const fps = Math.min(240, Math.max(1, Number($('fpsValue').value) || 60));
+    const interpolate = $('fpsInterp').checked;
+    $('fpsRender').disabled = true; $('fpsExport').disabled = true;
+    $('fpsProgress').classList.remove('hidden'); $('fpsBar').classList.remove('indet'); $('fpsBar').style.width = '0%';
+    $('fpsStatus').textContent = 'Rendering…'; $('fpsStatus').className = 'fr-status';
+    try {
+      const { tempPath } = await window.api.fpsRender({ inputPath: fpsState.path, fps, interpolate });
+      fpsState.tempPath = tempPath;
+      const v = $('fpsVideo'); v.src = 'file:///' + tempPath.replace(/\\/g, '/') + '?t=' + Date.now(); v.play().catch(() => {});
+      $('fpsBar').classList.remove('indet'); $('fpsBar').style.width = '100%';
+      $('fpsStatus').textContent = 'Preview ready — review, then export'; $('fpsStatus').className = 'fr-status done'; $('fpsStatus').onclick = null;
+      $('fpsExport').disabled = false;
+    } catch (e) {
+      $('fpsStatus').textContent = 'Error: ' + ((e && e.message) || e); $('fpsStatus').className = 'fr-status error';
+    } finally { $('fpsRender').disabled = false; }
+  });
+  $('fpsExport').addEventListener('click', async () => {
+    if (!fpsState.tempPath) return;
+    $('fpsExport').disabled = true;
+    try {
+      const res = await window.api.fpsExport({ tempPath: fpsState.tempPath, outputDir: state.outputDir });
+      $('fpsStatus').textContent = `Exported (${fmtBytes(res.outSize)}) — click to open`; $('fpsStatus').className = 'fr-status done';
+      $('fpsStatus').onclick = () => window.api.showItem(res.outputPath);
+      toast('FPS export complete', { path: res.outputPath });
+      try { addRecent({ path: res.outputPath }); } catch { /* */ }
+    } catch (e) {
+      $('fpsStatus').textContent = 'Error: ' + ((e && e.message) || e); $('fpsStatus').className = 'fr-status error';
+    } finally { $('fpsExport').disabled = false; }
   });
 }
 
@@ -2188,13 +2499,9 @@ function renderFlightCard(stars) {
 }
 function renderCalendar(contribs) {
   lastContribs = contribs;
-  const dark = document.body.dataset.theme === 'dark';
-  // Theme-aware palette: dark empty cell + a green ramp that reads on the dark canvas.
-  const levels = dark
-    ? ['#26262e', '#0e4429', '#006d32', '#26a641', '#39d353']
-    : ['#ebedf0', '#9be9a8', '#40c463', '#30a14e', '#216e39'];
-  // group into weeks (columns of 7)
-  const cells = contribs.map((c) => `<span class="gh-day" title="${c.date}: ${c.count}" style="background:${levels[c.level] || levels[0]}"></span>`).join('');
+  // Colors live in CSS via .gh-l0….gh-l4 (light) and their body[data-theme="dark"]
+  // overrides — so toggling the theme recolors the calendar instantly, no JS re-render.
+  const cells = contribs.map((c) => `<span class="gh-day gh-l${c.level || 0}" title="${c.date}: ${c.count}"></span>`).join('');
   $('ghCal').innerHTML = `<div class="gh-grid">${cells}</div>`;
 }
 function animateSignature() {
@@ -2276,6 +2583,16 @@ function wireAudioPlayer() {
     fadeRaf = requestAnimationFrame(step);
   }
 
+  // Quick "pop" on a control click: toggle a CSS class that runs a ~150ms scale
+  // keyframe, then remove it on animationend so it can re-fire on the next click.
+  function pop(el) {
+    if (!el || document.body.classList.contains('reduce-motion')) return;
+    el.classList.remove('ap-pop');
+    void el.offsetWidth;                 // reflow so re-adding restarts the animation
+    el.classList.add('ap-pop');
+    el.addEventListener('animationend', () => el.classList.remove('ap-pop'), { once: true });
+  }
+
   // Load a track, paint UI + tint, and (optionally) start playback with a fade-in.
   function loadTrack(i, autoplay) {
     current = ((i % PLAYLIST.length) + PLAYLIST.length) % PLAYLIST.length;
@@ -2288,7 +2605,7 @@ function wireAudioPlayer() {
     tintFromCover(tr.cover);
     if (autoplay) {
       a.volume = 0;                            // reset so a previous end-fade can't leave it muted
-      a.play().then(() => fadeTo(1, 1000)).catch(() => {});
+      a.play().then(() => fadeTo(1, 300)).catch(() => {});   // fade in over 300ms
     }
   }
 
@@ -2328,18 +2645,19 @@ function wireAudioPlayer() {
   const setPlayIcon = () => { $('apPlay').querySelector('.ic').innerHTML = icon(a.paused ? 'play' : 'pause'); };
 
   $('apPlay').addEventListener('click', () => {
+    pop($('apPlay'));
     if (a.paused) {
       endFading = false;
-      a.volume = 0; a.play().then(() => fadeTo(1, 1000)).catch(() => {});   // fade in over 1s
+      a.volume = 0; a.play().then(() => fadeTo(1, 300)).catch(() => {});   // fade in over 300ms
     } else {
       endFading = true;                                  // block the timeupdate end-fade from fighting us
-      fadeTo(0, 1000, () => { a.pause(); endFading = false; });            // fade out over 1s, then pause
+      fadeTo(0, 300, () => { a.pause(); endFading = false; });            // fade out over 300ms, then pause
     }
   });
   a.addEventListener('play', setPlayIcon); a.addEventListener('pause', setPlayIcon);
 
   a.addEventListener('ended', () => {
-    if ($('apRepeat').classList.contains('active')) { a.currentTime = 0; a.volume = 0; a.play().then(() => fadeTo(1, 1000)).catch(() => {}); }
+    if ($('apRepeat').classList.contains('active')) { a.currentTime = 0; a.volume = 0; a.play().then(() => fadeTo(1, 300)).catch(() => {}); }
     else loadTrack(current + 1, true);           // advance; wraps to 0 at the end
   });
 
@@ -2361,13 +2679,15 @@ function wireAudioPlayer() {
   $('apShuffle').addEventListener('click', () => $('apShuffle').classList.toggle('active'));
   $('apRepeat').addEventListener('click', () => $('apRepeat').classList.toggle('active'));
 
-  // Skip = quick fade-out, then load neighbour with a fade-in.
+  // Skip = 300ms fade-out, then load neighbour with a fade-in.
   $('apPrev').addEventListener('click', () => {
+    pop($('apPrev'));
     const restart = a.currentTime > 3 || PLAYLIST.length === 1;
-    fadeTo(0, 250, () => loadTrack(restart ? current : current - 1, true));
+    fadeTo(0, 300, () => loadTrack(restart ? current : current - 1, true));
   });
   $('apNext').addEventListener('click', () => {
-    fadeTo(0, 250, () => loadTrack(current + 1, true));   // wraps to first track
+    pop($('apNext'));
+    fadeTo(0, 300, () => loadTrack(current + 1, true));   // wraps to first track
   });
 
   // Re-tint the current track's cover (used when About opens so the live theme is honored).
@@ -2433,7 +2753,7 @@ async function init() {
   $('homeBtn').addEventListener('click', showHome);
   $('profileBtn').addEventListener('click', openProfile);
   $('settingsBtn').addEventListener('click', () => openSettings('appearance'));
-  document.querySelectorAll('.home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else showSection(c.dataset.section); }));
+  document.querySelectorAll('.home-card').forEach((c) => c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else if (c.dataset.tool === 'photofx') { state.backTo = 'home'; openPhotoEffects(); } else showSection(c.dataset.section); }));
   wireTitlebar(); wireStretch(); wireMetaEditor();
   $('settingsClose').addEventListener('click', () => $('settingsModal').classList.add('hidden'));
   $('settingsModal').addEventListener('click', (e) => { if (e.target === $('settingsModal')) $('settingsModal').classList.add('hidden'); });
