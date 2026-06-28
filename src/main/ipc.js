@@ -8,6 +8,7 @@ const encoders = require('./ffmpeg/encoders');
 const ffmpegPath = require('./ffmpeg/ffmpegPath');
 const media = require('./media');
 const youtube = require('./youtube');
+const aiModels = require('./aiModels');
 const settings = require('./settings');
 const { Queue } = require('./queue');
 
@@ -74,8 +75,18 @@ function registerIpc(getWindow) {
     hasSevenzip: ffmpegPath.hasSevenzip(),
     hasQpdf: ffmpegPath.hasQpdf(),
     hasExiftool: ffmpegPath.hasExiftool(),
+    hasWhisper: ffmpegPath.hasWhisper(),
+    hasRealesrgan: ffmpegPath.hasRealesrgan(),
+    // Background removal needs the native ORT runtime; degrade gracefully if it
+    // fails to load (the tool then shows "AI runtime unavailable").
+    hasBgRemoval: (() => { try { require('onnxruntime-node'); return true; } catch { return false; } })(),
     appVersion: (() => { try { return app.getVersion(); } catch { return '1.0.0'; } })(),
   }));
+
+  // ---- AI Model Manager (download/remove optional model weights) ----
+  ipcMain.handle('aimodel:list', () => aiModels.status());
+  ipcMain.handle('aimodel:download', (_e, { feature, id }) => aiModels.download(feature, id, (p) => send('aimodel:progress', p)));
+  ipcMain.handle('aimodel:remove', (_e, { feature, id }) => aiModels.remove(feature, id));
 
   // ---- YouTube / yt-dlp ----
   let ytController = null;
@@ -521,6 +532,239 @@ function registerIpc(getWindow) {
       for (const d of dirs) { try { fs.rmSync(d, { recursive: true, force: true }); removed++; } catch { /* */ } }
     } catch { /* */ }
     return { ok: true, removed };
+  });
+
+  // ---- Local AI: Subtitle / Transcript Extractor (whisper.cpp) ----
+  // 1) ffmpeg decodes the input to a 16kHz mono PCM wav in a temp dir.
+  // 2) whisper-cli.exe transcribes it, writing srt/txt/vtt itself via -of.
+  ipcMain.handle('ai:transcribe', async (_e, { inputPath, modelId, lang, formats, outputDir }) => {
+    if (!ffmpegPath.hasWhisper()) {
+      throw new Error('Transcription engine (whisper) is not available in this build.');
+    }
+    if (!inputPath || !fs.existsSync(inputPath)) throw new Error('No input file.');
+    if (!modelId) throw new Error('No transcription model selected. Download one in Settings → Local AI.');
+
+    // Resolve the model file via the shared aiModels module (required lazily so
+    // ipc.js still loads if that module is added later in the build).
+    const aiModels = require('./aiModels');
+    if (typeof aiModels.isInstalled === 'function' && !aiModels.isInstalled('whisper', modelId)) {
+      throw new Error('That transcription model is not installed. Download it in Settings → Local AI.');
+    }
+    const modelFile = aiModels.modelPath('whisper', modelId);
+    if (!modelFile || !fs.existsSync(modelFile)) {
+      throw new Error('Transcription model file is missing. Re-download it in Settings → Local AI.');
+    }
+
+    const wantSrt = !formats || formats.includes('srt');
+    const wantTxt = !formats || formats.includes('txt');
+    const wantVtt = formats ? formats.includes('vtt') : false;
+    if (!wantSrt && !wantTxt && !wantVtt) throw new Error('Pick at least one output format.');
+
+    const parsed = path.parse(inputPath);
+    const dir = resolveOutputDir({ outputDir }, parsed.dir);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
+
+    // Temp wav lives under the OS temp folder; cleaned up at the end.
+    const tmpDir = path.join(app.getPath('temp'), 'mtb-transcribe');
+    try { fs.mkdirSync(tmpDir, { recursive: true }); } catch { /* */ }
+    const wavPath = path.join(tmpDir, `stt_${Date.now()}.wav`);
+
+    // Probe duration for coarse progress while whisper runs.
+    let durationSec = 0;
+    try {
+      durationSec = await new Promise((resolve) => {
+        execFile(ffmpegPath.ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', inputPath],
+          { windowsHide: true }, (err, stdout) => resolve(err ? 0 : parseFloat(String(stdout).trim()) || 0));
+      });
+    } catch { durationSec = 0; }
+
+    send('ai:transcribe:progress', { stage: 'extract', indeterminate: true });
+
+    // Step 1: extract 16kHz mono PCM wav.
+    await new Promise((resolve, reject) => {
+      const args = ['-y', '-hide_banner', '-loglevel', 'error', '-i', inputPath, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath];
+      execFile(ffmpegPath.ffmpeg, args, { windowsHide: true }, (err, _o, stderr) => {
+        if (err) reject(new Error((String(stderr || err.message).split('\n').filter(Boolean).pop()) || 'Audio extraction failed.'));
+        else resolve();
+      });
+    });
+
+    // Output base (no extension) — whisper appends .srt/.txt/.vtt itself.
+    let outBase = path.join(dir, `MTB_${parsed.name}_transcript`);
+    let n = 1;
+    while (fs.existsSync(outBase + '.srt') || fs.existsSync(outBase + '.txt') || fs.existsSync(outBase + '.vtt')) {
+      outBase = path.join(dir, `MTB_${parsed.name}_transcript (${n})`);
+      n += 1;
+    }
+
+    // Step 2: run whisper-cli.
+    const args = ['-m', modelFile, '-f', wavPath, '-l', (lang || 'auto'), '-of', outBase];
+    if (wantSrt) args.push('-osrt');
+    if (wantTxt) args.push('-otxt');
+    if (wantVtt) args.push('-ovtt');
+
+    try {
+      await new Promise((resolve, reject) => {
+        let stderrTail = '';
+        const proc = spawn(ffmpegPath.whisper, args, { windowsHide: true });
+        const onChunk = (buf) => {
+          const text = buf.toString();
+          stderrTail = (stderrTail + text).slice(-4000);
+          // whisper.cpp prints timestamps like "[00:01:23.000 --> ...]" to stderr.
+          const m = /\[(\d{2}):(\d{2}):(\d{2})\.\d+\s*-->/.exec(text);
+          if (m && durationSec > 0) {
+            const sec = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]);
+            const percent = Math.max(0, Math.min(99, (sec / durationSec) * 100));
+            send('ai:transcribe:progress', { stage: 'transcribe', percent });
+          } else {
+            send('ai:transcribe:progress', { stage: 'transcribe', indeterminate: true });
+          }
+        };
+        proc.stdout.on('data', onChunk);
+        proc.stderr.on('data', onChunk);
+        proc.on('error', (err) => reject(new Error(err.message)));
+        proc.on('close', (code) => {
+          if (code === 0) resolve();
+          else reject(new Error((stderrTail.split('\n').filter(Boolean).pop()) || 'Transcription failed.'));
+        });
+      });
+    } finally {
+      try { fs.unlinkSync(wavPath); } catch { /* */ }
+    }
+
+    // Collect produced files.
+    const outputs = [];
+    for (const [want, ext] of [[wantSrt, 'srt'], [wantTxt, 'txt'], [wantVtt, 'vtt']]) {
+      if (!want) continue;
+      const p = outBase + '.' + ext;
+      if (fs.existsSync(p)) { let size = 0; try { size = fs.statSync(p).size; } catch { /* */ } outputs.push({ path: p, ext, size }); }
+    }
+    if (!outputs.length) throw new Error('Transcription produced no files.');
+    send('ai:transcribe:progress', { stage: 'done', percent: 100 });
+    return { outputs };
+  });
+
+  // ---- Local AI: Background Removal (U²-Net / IS-Net via onnxruntime-node) ----
+  // The renderer does all image I/O on a <canvas>: it builds a normalized
+  // 1x3x320x320 NCHW Float32 tensor and ships it here; main runs ONLY the ORT
+  // forward pass and returns a 320x320 mask (0..1). Sessions are cached per
+  // model so repeated runs are fast.
+  let _ort = null;            // lazily-required onnxruntime-node (or false on failure)
+  const _ortSessions = new Map(); // modelId -> InferenceSession
+
+  function loadOrt() {
+    if (_ort === false) throw new Error('AI runtime (onnxruntime-node) is unavailable in this build.');
+    if (_ort) return _ort;
+    try {
+      _ort = require('onnxruntime-node');
+      return _ort;
+    } catch (err) {
+      _ort = false;
+      throw new Error('AI runtime (onnxruntime-node) failed to load: ' + ((err && err.message) || err));
+    }
+  }
+
+  async function getBgSession(modelId) {
+    if (_ortSessions.has(modelId)) return _ortSessions.get(modelId);
+    if (!aiModels.isInstalled('bgremoval', modelId)) {
+      throw new Error('That background-removal model is not installed. Download it in Settings → Local AI.');
+    }
+    const modelFile = aiModels.modelPath('bgremoval', modelId);
+    if (!modelFile || !fs.existsSync(modelFile)) {
+      throw new Error('Background-removal model file is missing. Re-download it in Settings → Local AI.');
+    }
+    const ort = loadOrt();
+    const session = await ort.InferenceSession.create(modelFile);
+    _ortSessions.set(modelId, session);
+    return session;
+  }
+
+  ipcMain.handle('ai:removebg', async (_e, { modelId, data, size }) => {
+    if (!modelId) throw new Error('No background-removal model selected. Download one in Settings → Local AI.');
+    const s = Number(size) || 320;
+    const ort = loadOrt();
+    const session = await getBgSession(modelId);
+
+    // The renderer sends a Float32Array (or a transferable ArrayBuffer); coerce.
+    const arr = (data instanceof Float32Array) ? data
+      : (data && data.buffer ? new Float32Array(data.buffer, data.byteOffset || 0, (data.byteLength || 0) / 4)
+        : Float32Array.from(data || []));
+    if (arr.length !== 3 * s * s) throw new Error('Bad input tensor size.');
+
+    const input = new ort.Tensor('float32', arr, [1, 3, s, s]);
+    const feeds = {};
+    feeds[session.inputNames[0]] = input;
+    const results = await session.run(feeds);
+    const out = results[session.outputNames[0]];
+    const od = out.data; // Float32Array, length s*s (first output channel)
+
+    // Min-max normalize the raw output to 0..1 (rembg's d1 normalization).
+    let mn = Infinity, mx = -Infinity;
+    const n = s * s;
+    for (let i = 0; i < n; i++) { const v = od[i]; if (v < mn) mn = v; if (v > mx) mx = v; }
+    const range = (mx - mn) || 1;
+    const mask = new Float32Array(n);
+    for (let i = 0; i < n; i++) mask[i] = (od[i] - mn) / range;
+    return { mask };
+  });
+
+  // ---- Local AI: Image Upscaler (Real-ESRGAN ncnn-vulkan) ----
+  ipcMain.handle('ai:upscale', async (_e, { inputPath, model, scale, outputDir }) => {
+    if (!ffmpegPath.hasRealesrgan()) {
+      throw new Error('Upscaler engine (Real-ESRGAN) is not available in this build.');
+    }
+    if (!inputPath || !fs.existsSync(inputPath)) throw new Error('No input image.');
+
+    const modelName = model || 'realesrgan-x4plus';
+    // The x4plus models are x4-native; only animevideov3 supports 2/3/4.
+    let s = Number(scale) || 4;
+    if (modelName !== 'realesr-animevideov3') s = 4;
+    s = Math.max(2, Math.min(4, s));
+
+    const modelsDir = path.join(path.dirname(ffmpegPath.realesrgan), 'models');
+    const parsed = path.parse(inputPath);
+    const dir = resolveOutputDir({ outputDir }, parsed.dir);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
+    const outPath = uniqueOutput(dir, `${parsed.name}_x${s}`, 'png', true);
+
+    const baseArgs = ['-i', inputPath, '-o', outPath, '-n', modelName, '-s', String(s), '-m', modelsDir, '-f', 'png'];
+
+    const run = (extra) => new Promise((resolve, reject) => {
+      let stderrTail = '';
+      const proc = spawn(ffmpegPath.realesrgan, baseArgs.concat(extra || []), { windowsHide: true });
+      // realesrgan prints "12.34%" progress to stderr.
+      const onChunk = (buf) => {
+        const text = buf.toString();
+        stderrTail = (stderrTail + text).slice(-4000);
+        const m = /(\d+(?:\.\d+)?)%/.exec(text);
+        if (m) send('ai:upscale:progress', { percent: Math.max(0, Math.min(99, parseFloat(m[1]))) });
+        else send('ai:upscale:progress', { indeterminate: true });
+      };
+      proc.stdout.on('data', onChunk);
+      proc.stderr.on('data', onChunk);
+      proc.on('error', (err) => reject(new Error(err.message)));
+      proc.on('close', (code) => {
+        if (code === 0 && fs.existsSync(outPath)) resolve();
+        else { const e = new Error((stderrTail.split('\n').filter(Boolean).pop()) || 'Upscale failed.'); e._stderr = stderrTail; e._code = code; reject(e); }
+      });
+    });
+
+    send('ai:upscale:progress', { indeterminate: true });
+    try {
+      await run([]);
+    } catch (err) {
+      // A Vulkan/GPU failure → retry once on CPU (-g -1).
+      const blob = String(err._stderr || err.message || '').toLowerCase();
+      const looksGpu = /vulkan|vkdevice|gpu|device|no.*physical|out of memory|vkallocate/.test(blob) || err._code !== 0;
+      try { fs.unlinkSync(outPath); } catch { /* */ }
+      if (!looksGpu) throw err;
+      send('ai:upscale:progress', { indeterminate: true, retry: 'cpu' });
+      await run(['-g', '-1']);
+    }
+
+    let size = 0; try { size = fs.statSync(outPath).size; } catch { /* */ }
+    send('ai:upscale:progress', { percent: 100 });
+    return { outputPath: outPath, outSize: size };
   });
 }
 

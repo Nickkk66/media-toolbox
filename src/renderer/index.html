@@ -291,6 +291,106 @@
         </div>
       </div>
 
+      <!-- Subtitle / Transcript Extractor (whisper) -->
+      <div id="transcribePanel" class="panel hidden">
+        <div class="toolbar">
+          <button id="trLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose video / audio</button>
+          <span class="muted" id="trName"></span>
+        </div>
+        <div class="ai-wrap">
+          <div class="ai-side">
+            <div id="trNoModel" class="ai-notice hidden">No transcription model — download one in Settings → Local AI.</div>
+            <label class="field"><span>Model</span><select id="trModel"></select></label>
+            <label class="field"><span>Language</span>
+              <select id="trLang">
+                <option value="auto">Auto-detect</option>
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+                <option value="it">Italian</option>
+                <option value="pt">Portuguese</option>
+                <option value="nl">Dutch</option>
+                <option value="ru">Russian</option>
+                <option value="zh">Chinese</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="ar">Arabic</option>
+                <option value="hi">Hindi</option>
+              </select>
+            </label>
+            <div class="ai-fmt">
+              <span class="ai-fmt-label">Output formats</span>
+              <label class="ai-check"><input id="trFmtSrt" type="checkbox" checked/> <span>SRT (subtitles)</span></label>
+              <label class="ai-check"><input id="trFmtTxt" type="checkbox" checked/> <span>TXT (plain text)</span></label>
+              <label class="ai-check"><input id="trFmtVtt" type="checkbox"/> <span>VTT (web captions)</span></label>
+            </div>
+            <p class="hint">Audio is extracted to 16 kHz mono, then transcribed locally on your machine. Larger models are more accurate but slower.</p>
+            <button id="trRun" class="btn primary big" disabled>Transcribe <span class="ic" data-icon="arrowRight"></span></button>
+            <div id="trProgress" class="yt-progress hidden"><div class="bar"><div id="trBar" class="bar-fill"></div></div><div id="trStatus" class="fr-status"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Image Upscaler (Real-ESRGAN) -->
+      <div id="upscalePanel" class="panel hidden">
+        <div class="toolbar">
+          <button id="upLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose image</button>
+          <span class="muted" id="upName"></span>
+        </div>
+        <div class="ai-wrap">
+          <div class="st-preview ai-preview"><img id="upPreview" class="ai-img hidden" alt="preview"/></div>
+          <div class="ai-side">
+            <div id="upNoEngine" class="ai-notice hidden">AI upscaler engine isn’t available in this build.</div>
+            <label class="field"><span>Model</span>
+              <select id="upModel">
+                <option value="realesrgan-x4plus">General photo (x4plus)</option>
+                <option value="realesrgan-x4plus-anime">Anime / illustration (x4plus-anime)</option>
+                <option value="realesr-animevideov3">Anime fast (animevideov3)</option>
+              </select>
+            </label>
+            <label class="field"><span>Scale</span>
+              <select id="upScale">
+                <option value="2">2×</option>
+                <option value="3">3×</option>
+                <option value="4" selected>4×</option>
+              </select>
+            </label>
+            <p class="hint" id="upScaleHint">The x4plus models upscale 4× natively. Only the animevideov3 model supports 2× / 3×.</p>
+            <button id="upRun" class="btn primary big" disabled>Upscale <span class="ic" data-icon="arrowRight"></span></button>
+            <div id="upProgress" class="yt-progress hidden"><div class="bar"><div id="upBar" class="bar-fill"></div></div><div id="upStatus" class="fr-status"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Background Removal (U²-Net / IS-Net via onnxruntime-node) -->
+      <div id="removebgPanel" class="panel hidden">
+        <div class="toolbar">
+          <button id="rbLoad" class="btn-add"><span class="ic" data-icon="plus"></span> Choose image</button>
+          <span class="muted" id="rbName"></span>
+        </div>
+        <div class="ai-wrap">
+          <div class="st-preview ai-preview"><canvas id="rbPreview" class="ai-img hidden"></canvas></div>
+          <div class="ai-side">
+            <div id="rbNoEngine" class="ai-notice hidden">AI runtime unavailable — background removal needs the onnxruntime engine.</div>
+            <div id="rbNoModel" class="ai-notice hidden">No background-removal model — download one in Settings → Local AI.</div>
+            <label class="field"><span>Model</span><select id="rbModel"></select></label>
+            <label class="field"><span>Background</span>
+              <select id="rbBg">
+                <option value="transparent" selected>Transparent</option>
+                <option value="white">White</option>
+                <option value="black">Black</option>
+                <option value="custom">Custom color…</option>
+              </select>
+            </label>
+            <label class="field" id="rbColorField" style="display:none"><span>Color</span><input id="rbColor" type="color" value="#0071bb"/></label>
+            <p class="hint">The cutout is computed locally on your machine — nothing is uploaded. Output is a transparent PNG (or filled with the chosen background).</p>
+            <button id="rbRun" class="btn primary big" disabled>Remove background <span class="ic" data-icon="arrowRight"></span></button>
+            <div id="rbProgress" class="yt-progress hidden"><div class="bar"><div id="rbBar" class="bar-fill"></div></div><div id="rbStatus" class="fr-status"></div></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Color Picker -->
       <div id="colorPanel" class="panel hidden">
         <div class="cp-wrap">

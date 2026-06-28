@@ -64,6 +64,8 @@ let _ytdlp = null;
 let _sevenzip = null;
 let _qpdf = null;
 let _exiftool = null;
+let _realesrgan = null;
+let _whisper = null;
 
 module.exports = {
   get ffmpeg() {
@@ -96,6 +98,16 @@ module.exports = {
     if (_exiftool === null) _exiftool = resolve('exiftool', 'exiftool');
     return _exiftool;
   },
+  get realesrgan() {
+    // realesrgan-ncnn-vulkan.exe + vcomp140.dll + a models/ folder beside it.
+    if (_realesrgan === null) _realesrgan = resolve('realesrgan-ncnn-vulkan', 'realesrgan');
+    return _realesrgan;
+  },
+  get whisper() {
+    // whisper-cli.exe (whisper.cpp) + its ggml/openblas DLLs beside it.
+    if (_whisper === null) _whisper = resolve('whisper-cli', 'whisper');
+    return _whisper;
+  },
   // True only when a real bundled/vendored binary was found (not a PATH fallback).
   isBundled() {
     return path.isAbsolute(this.ffmpeg) && fs.existsSync(this.ffmpeg);
@@ -114,5 +126,11 @@ module.exports = {
   },
   hasExiftool() {
     return path.isAbsolute(this.exiftool) && fs.existsSync(this.exiftool);
+  },
+  hasRealesrgan() {
+    return path.isAbsolute(this.realesrgan) && fs.existsSync(this.realesrgan);
+  },
+  hasWhisper() {
+    return path.isAbsolute(this.whisper) && fs.existsSync(this.whisper);
   },
 };

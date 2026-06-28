@@ -61,7 +61,7 @@ function customSelect(sel) {
 function enhanceSelects(root) { (root || document).querySelectorAll('select:not([data-cs])').forEach(customSelect); }
 function setHero(title, sub) { $('heroTitle').textContent = title; $('heroSub').textContent = sub; }
 
-const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel'];
+const PANELS = ['homeView', 'convertMenu', 'compressMenu', 'toolsMenu', 'toolHeader', 'dropZone', 'colorPanel', 'ytPanel', 'unitPanel', 'timePanel', 'stretchPanel', 'fpsPanel', 'profilePanel', 'metaPanel', 'batchPanel', 'fxPanel', 'transcribePanel', 'upscalePanel', 'removebgPanel'];
 function hideAll() {
   PANELS.forEach((id) => { const el = $(id); if (el) el.classList.add('hidden'); });
   document.body.classList.remove('on-profile');
@@ -189,6 +189,9 @@ function openItem(item, kind) {
   if (item.engine === 'metaedit') return openMetaEditor();
   if (item.engine === 'batchrename') return openBatchRename();
   if (item.engine === 'photofx') return openPhotoEffects();
+  if (item.engine === 'transcribe') return openTranscribe();
+  if (item.engine === 'upscaleai') return openUpscaleAi();
+  if (item.engine === 'removebg') return openRemoveBg();
   hideAll();
   $('toolHeader').classList.remove('hidden');
   $('toolName').textContent = item.label;
@@ -2067,6 +2070,34 @@ function toast(msg, opts) {
   return close;
 }
 
+// ---------- first-run AI model setup feedback ----------
+// The installer can record optional AI models to download on first launch
+// (see build/installer.nsh + main.js). We surface that with lightweight
+// toasts and reuse the existing aimodels progress channel for a live percent.
+function wireFirstRun() {
+  let active = false;       // true only while a first-run download is running
+  let progressClose = null; // dismiss handle for the rolling progress toast
+  window.api.onFirstRunStart((d) => {
+    active = true;
+    const n = (d && d.items && d.items.length) || 0;
+    toast(`Setting up AI model${n === 1 ? '' : 's'}…`);
+  });
+  // Reuse the model-manager progress events for a single rolling notice.
+  // Gated by `active` so manual downloads from Settings aren't affected — the
+  // model-manager UI has its own onProgress listener for those.
+  window.api.aimodels.onProgress((p) => {
+    if (!active || !p) return;
+    const pct = Math.round(p.percent || 0);
+    if (progressClose) progressClose();
+    progressClose = toast(`Downloading ${p.feature} model… ${pct}%`);
+  });
+  window.api.onFirstRunDone(() => {
+    active = false;
+    if (progressClose) { progressClose(); progressClose = null; }
+    toast('AI models ready');
+  });
+}
+
 // ---------- recents / downloads menu ----------
 const RECENTS_KEY = 'mtb_recents';
 function loadRecents() { try { return JSON.parse(localStorage.getItem(RECENTS_KEY)) || []; } catch { return []; } }
@@ -2149,6 +2180,7 @@ const SETTINGS_CATS = [
   ['appearance', 'appearance', 'settings'],
   ['accessibility', 'accessibility', 'user'],
   ['performance', 'performance', 'tools'],
+  ['localai', 'local ai', 'tools'],
   ['downloads', 'downloads', 'download'],
   ['advanced', 'advanced', 'convert'],
 ];
@@ -2163,6 +2195,94 @@ function toggleRow(id, label, on, desc) {
 function actionRow(buttons) {
   return `<div class="action-row">${buttons.map(([id, l, ic, danger]) => `<button class="act-btn ${danger ? 'danger' : ''}" id="${id}">${ic ? `<span class="ic">${icon(ic)}</span>` : ''}${l}</button>`).join('')}</div>`;
 }
+// ---- local ai model rows ----
+function fmtModelSize(b) {
+  if (!b) return '';
+  if (b >= 1e9) return (b / 1e9).toFixed(1).replace(/\.0$/, '') + ' GB';
+  return Math.round(b / 1e6) + ' MB';
+}
+// One row per model: label + size·tier on the left, state + action button right,
+// plus a hidden per-row progress bar shown while that model is downloading.
+function aiModelRow(feature, m) {
+  const installed = m.installed;
+  return `<div class="ai-row" data-feature="${feature}" data-id="${m.id}">
+    <div class="ai-row-main">
+      <div class="ai-row-top">
+        <span class="ai-name">${m.label}</span>
+        <span class="ai-state ${installed ? 'on' : ''}" data-role="state">${installed ? 'installed' : 'not installed'}</span>
+      </div>
+      <div class="ai-meta">${fmtModelSize(m.sizeBytes)} · ${m.tier}</div>
+      <div class="ai-bar hidden" data-role="bar"><span data-role="fill"></span></div>
+    </div>
+    <button class="act-btn ${installed ? 'danger' : ''}" data-role="btn">${installed ? 'remove' : 'download'}</button>
+  </div>`;
+}
+// Human-readable heading per managed feature, shown above its model rows.
+const AI_FEATURE_LABELS = {
+  whisper: 'transcription models',
+  bgremoval: 'background removal models',
+};
+function renderAiModels(status) {
+  const host = $('aiModels');
+  if (!host) return;
+  const features = status && typeof status === 'object' ? Object.keys(status) : [];
+  if (!features.length) { host.innerHTML = '<div class="set-note">No models available.</div>'; return; }
+  host.innerHTML = features.map((feature) => {
+    const list = status[feature] || [];
+    if (!list.length) return '';
+    const label = AI_FEATURE_LABELS[feature] || feature;
+    return `<div class="ai-feature">
+      <h4 class="ai-feature-h">${mtbEsc(label)}</h4>
+      ${list.map((m) => aiModelRow(feature, m)).join('')}
+    </div>`;
+  }).join('');
+  wireAiModelRows();
+}
+// Wire each row's download/remove button + keep references for progress updates.
+function wireAiModelRows() {
+  document.querySelectorAll('#aiModels .ai-row').forEach((row) => {
+    const feature = row.dataset.feature, id = row.dataset.id;
+    const btn = row.querySelector('[data-role="btn"]');
+    if (!btn || btn._wired) return; btn._wired = true;
+    btn.addEventListener('click', async () => {
+      const isInstalled = row.querySelector('[data-role="state"]').classList.contains('on');
+      if (isInstalled) {
+        if (!(await confirmModal('Remove model?', 'This deletes the downloaded model file. You can download it again later.'))) return;
+        const ok = await window.api.aimodels.remove(feature, id);
+        if (ok) { setAiRowInstalled(row, false); toast('Model removed'); }
+        else toast('Could not remove model', { kind: 'error' });
+        return;
+      }
+      // Download.
+      const bar = row.querySelector('[data-role="bar"]');
+      const fill = row.querySelector('[data-role="fill"]');
+      btn.disabled = true; btn.textContent = 'downloading…';
+      bar.classList.remove('hidden'); fill.style.width = '0%';
+      row.querySelector('[data-role="state"]').textContent = 'downloading…';
+      try {
+        await window.api.aimodels.download(feature, id);
+        setAiRowInstalled(row, true);
+        toast('Model downloaded');
+      } catch (e) {
+        row.querySelector('[data-role="state"]').textContent = 'not installed';
+        btn.disabled = false; btn.textContent = 'download'; btn.className = 'act-btn';
+        toast('Download failed: ' + ((e && e.message) || e), { kind: 'error' });
+      } finally {
+        bar.classList.add('hidden');
+      }
+    });
+  });
+}
+function setAiRowInstalled(row, installed) {
+  const state = row.querySelector('[data-role="state"]');
+  const btn = row.querySelector('[data-role="btn"]');
+  state.classList.toggle('on', installed);
+  state.textContent = installed ? 'installed' : 'not installed';
+  btn.disabled = false;
+  btn.textContent = installed ? 'remove' : 'download';
+  btn.className = 'act-btn' + (installed ? ' danger' : '');
+}
+
 function settingsHtml(cat, s) {
   if (cat === 'appearance') return `
     <h3 class="set-h">theme</h3>
@@ -2178,6 +2298,24 @@ function settingsHtml(cat, s) {
     <h3 class="set-h">cpu usage limit</h3>
     <div class="perf-list">${perfRadios(s.performance, s.cores, s.threads)}</div>
     <p class="set-note">${s.cores} cores detected. this caps how hard the app pushes your CPU during encoding.</p>`;
+
+  if (cat === 'localai') {
+    const caps = state.caps || {};
+    const whisperReady = caps.hasWhisper;
+    const bgReady = caps.hasBgRemoval;
+    return `
+    <h3 class="set-h">on-device models</h3>
+    <p class="set-note">download models for the local AI tools (transcription, background removal). models run entirely on your device — nothing is uploaded. larger models are slower but more accurate. you can remove any model to free up disk space.</p>
+    <div class="ai-engine">
+      <span class="ai-dot ${whisperReady ? 'on' : 'off'}"></span>
+      <span>whisper engine — ${whisperReady ? 'engine ready' : 'not found'}</span>
+    </div>
+    <div class="ai-engine">
+      <span class="ai-dot ${bgReady ? 'on' : 'off'}"></span>
+      <span>background removal engine — ${bgReady ? 'engine ready' : 'not found'}</span>
+    </div>
+    <div class="ai-models" id="aiModels"><div class="set-note">loading models…</div></div>`;
+  }
 
   if (cat === 'downloads') return `
     <h3 class="set-h">default download location</h3>
@@ -2242,6 +2380,26 @@ function wireSettingsCat(cat, s) {
     const toggleSlider = (v) => { const sl = $('perfSlider'); if (sl) sl.classList.toggle('hidden', v !== 'custom'); };
     document.querySelectorAll('#settingsContent input[name="perf"]').forEach((r) => r.addEventListener('change', () => { const v = r.value; toggleSlider(v); persist(v === 'custom' ? { performance: 'custom', threads: Number(($('perfThreadsN') || {}).value) || 1 } : { performance: v }); }));
     const tn = $('perfThreadsN'); if (tn) tn.addEventListener('change', () => { const r = document.querySelector('#settingsContent input[name="perf"][value="custom"]'); if (r) r.checked = true; toggleSlider('custom'); persist({ performance: 'custom', threads: Number(tn.value) || 1 }); });
+  } else if (cat === 'localai') {
+    // Register a single progress listener once; it routes per-model events to
+    // the matching row's bar (rows may re-render, so we look them up live).
+    if (!state._aiProgressWired) {
+      state._aiProgressWired = true;
+      window.api.aimodels.onProgress((p) => {
+        if (!p) return;
+        const row = document.querySelector(`#aiModels .ai-row[data-feature="${p.feature}"][data-id="${p.id}"]`);
+        if (!row) return;
+        const bar = row.querySelector('[data-role="bar"]');
+        const fill = row.querySelector('[data-role="fill"]');
+        const st = row.querySelector('[data-role="state"]');
+        if (bar) bar.classList.remove('hidden');
+        if (fill) fill.style.width = `${(p.percent || 0).toFixed(1)}%`;
+        if (st) st.textContent = `downloading… ${(p.percent || 0).toFixed(0)}%`;
+      });
+    }
+    window.api.aimodels.list().then(renderAiModels).catch(() => {
+      const host = $('aiModels'); if (host) host.innerHTML = '<div class="set-warn">Could not load models.</div>';
+    });
   } else if (cat === 'downloads') {
     document.querySelectorAll('#settingsContent input[name="dl"]').forEach((r) => r.addEventListener('change', () => persist({ downloadLocation: r.value })));
     const pick = $('dlPick'); if (pick) pick.addEventListener('click', async (e) => { e.preventDefault(); const d = await window.api.pickOutputDir(); if (d) { state._customDir = d; $('dlCustomDesc').textContent = d; const r = document.querySelector('#settingsContent input[name="dl"][value="custom"]'); if (r) r.checked = true; persist({ downloadLocation: 'custom', customDownloadDir: d }); } });
@@ -2413,6 +2571,343 @@ function wireFpsPreview() {
     } catch (e) {
       $('fpsStatus').textContent = 'Error: ' + ((e && e.message) || e); $('fpsStatus').className = 'fr-status error';
     } finally { $('fpsExport').disabled = false; }
+  });
+}
+
+// ---------- Subtitle / Transcript Extractor (whisper) ----------
+// Lazy-wired on first open. Model dropdown is filled from window.api.aimodels.list()
+// showing only INSTALLED whisper models; if none, a notice is shown and Run is disabled.
+const trState = { path: null, wired: false };
+async function openTranscribe() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Subtitle / Transcript Extractor';
+  setHero('Subtitle / Transcript Extractor', 'Local speech-to-text — generate SRT, TXT or VTT from any video or audio');
+  $('transcribePanel').classList.remove('hidden');
+  if (!trState.wired) { wireTranscribe(); trState.wired = true; }
+  enhanceSelects($('transcribePanel'));
+  await trRefreshModels();
+}
+async function trRefreshModels() {
+  const sel = $('trModel');
+  const engineOk = !state.caps || state.caps.hasWhisper !== false;
+  let installed = [];
+  try {
+    const all = (window.api.aimodels && await window.api.aimodels.list()) || [];
+    const list = Array.isArray(all) ? all : (all.whisper || all.models || []);
+    installed = list.filter((m) => (m.feature === 'whisper' || m.kind === 'whisper' || !m.feature) && (m.installed || m.isInstalled));
+  } catch { installed = []; }
+  const none = !engineOk || !installed.length;
+  $('trNoModel').classList.toggle('hidden', !none);
+  $('trNoModel').textContent = !engineOk
+    ? 'Transcription engine (whisper) isn’t available in this build.'
+    : 'No transcription model — download one in Settings → Local AI.';
+  if (none) {
+    sel.innerHTML = '<option value="">— none installed —</option>';
+  } else {
+    sel.innerHTML = installed.map((m) => `<option value="${mtbEsc(m.id)}">${mtbEsc(m.label || m.name || m.id)}</option>`).join('');
+  }
+  if (sel._csRender) sel._csRender();
+  trUpdateRun();
+}
+function trUpdateRun() {
+  const hasModel = !!($('trModel').value);
+  const anyFmt = $('trFmtSrt').checked || $('trFmtTxt').checked || $('trFmtVtt').checked;
+  $('trRun').disabled = !(trState.path && hasModel && anyFmt);
+}
+function wireTranscribe() {
+  window.api.onAiTranscribeProgress((d) => {
+    if (!d) return;
+    $('trProgress').classList.remove('hidden');
+    if (d.stage === 'extract') { $('trBar').classList.add('indet'); $('trStatus').textContent = 'Extracting audio…'; }
+    else if (d.indeterminate) { $('trBar').classList.add('indet'); $('trStatus').textContent = 'Transcribing…'; }
+    else { $('trBar').classList.remove('indet'); $('trBar').style.width = `${(d.percent || 0).toFixed(1)}%`; $('trStatus').textContent = `Transcribing… ${(d.percent || 0).toFixed(0)}%`; }
+    $('trStatus').className = 'fr-status';
+  });
+  $('trLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
+    trState.path = paths[0]; $('trName').textContent = baseName(paths[0]);
+    $('trProgress').classList.add('hidden'); $('trStatus').textContent = '';
+    trUpdateRun();
+  });
+  $('trModel').addEventListener('change', trUpdateRun);
+  ['trFmtSrt', 'trFmtTxt', 'trFmtVtt'].forEach((id) => $(id).addEventListener('change', trUpdateRun));
+  $('trRun').addEventListener('click', async () => {
+    if (!trState.path) return;
+    const modelId = $('trModel').value; if (!modelId) return;
+    const formats = [];
+    if ($('trFmtSrt').checked) formats.push('srt');
+    if ($('trFmtTxt').checked) formats.push('txt');
+    if ($('trFmtVtt').checked) formats.push('vtt');
+    if (!formats.length) return;
+    $('trRun').disabled = true;
+    $('trProgress').classList.remove('hidden'); $('trBar').classList.add('indet');
+    $('trStatus').textContent = 'Extracting audio…'; $('trStatus').className = 'fr-status'; $('trStatus').onclick = null;
+    try {
+      const res = await window.api.aiTranscribe({ inputPath: trState.path, modelId, lang: $('trLang').value, formats, outputDir: state.outputDir });
+      $('trBar').classList.remove('indet'); $('trBar').style.width = '100%';
+      const first = res.outputs[0];
+      const label = res.outputs.map((o) => o.ext.toUpperCase()).join(' + ');
+      $('trStatus').textContent = `Saved ${label} — click to open`; $('trStatus').className = 'fr-status done';
+      $('trStatus').onclick = () => window.api.showItem(first.path);
+      toast('Transcript ready', { path: first.path });
+      try { addRecent({ path: first.path }); } catch { /* */ }
+    } catch (e) {
+      $('trBar').classList.remove('indet');
+      $('trStatus').textContent = 'Error: ' + ((e && e.message) || e); $('trStatus').className = 'fr-status error';
+    } finally { trUpdateRun(); }
+  });
+}
+
+// ---------- AI Image Upscaler (Real-ESRGAN) ----------
+const upState = { path: null, wired: false };
+function openUpscaleAi() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'AI Image Upscaler';
+  setHero('AI Image Upscaler', 'Real-ESRGAN super-resolution — enlarge and enhance images locally');
+  $('upscalePanel').classList.remove('hidden');
+  if (!upState.wired) { wireUpscaleAi(); upState.wired = true; }
+  enhanceSelects($('upscalePanel'));
+  const engineOk = !state.caps || state.caps.hasRealesrgan !== false;
+  $('upNoEngine').classList.toggle('hidden', engineOk);
+  upUpdateScale();
+  upUpdateRun();
+}
+function upUpdateScale() {
+  // x4plus models are x4-native; force scale 4 and lock the control for them.
+  const model = $('upModel').value;
+  const sel = $('upScale');
+  const fixed = model !== 'realesr-animevideov3';
+  if (fixed) {
+    sel.value = '4';
+    [...sel.options].forEach((o) => { o.disabled = o.value !== '4'; });
+    $('upScaleHint').textContent = 'This model upscales 4× natively. Switch to “Anime fast” for 2× / 3×.';
+  } else {
+    [...sel.options].forEach((o) => { o.disabled = false; });
+    $('upScaleHint').textContent = 'animevideov3 supports 2× / 3× / 4×.';
+  }
+  if (sel._csRender) sel._csRender();
+}
+function upUpdateRun() {
+  const engineOk = !state.caps || state.caps.hasRealesrgan !== false;
+  $('upRun').disabled = !(upState.path && engineOk);
+}
+function wireUpscaleAi() {
+  window.api.onAiUpscaleProgress((d) => {
+    if (!d) return;
+    $('upProgress').classList.remove('hidden');
+    if (d.indeterminate) { $('upBar').classList.add('indet'); $('upStatus').textContent = d.retry === 'cpu' ? 'GPU failed — retrying on CPU…' : 'Upscaling…'; }
+    else { $('upBar').classList.remove('indet'); $('upBar').style.width = `${(d.percent || 0).toFixed(1)}%`; $('upStatus').textContent = `Upscaling… ${(d.percent || 0).toFixed(0)}%`; }
+    $('upStatus').className = 'fr-status';
+  });
+  $('upLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
+    upState.path = paths[0]; $('upName').textContent = baseName(paths[0]);
+    const img = $('upPreview'); img.src = 'file:///' + paths[0].replace(/\\/g, '/'); img.classList.remove('hidden');
+    $('upProgress').classList.add('hidden'); $('upStatus').textContent = '';
+    upUpdateRun();
+  });
+  $('upModel').addEventListener('change', () => { upUpdateScale(); upUpdateRun(); });
+  $('upRun').addEventListener('click', async () => {
+    if (!upState.path) return;
+    const model = $('upModel').value;
+    let scale = Number($('upScale').value) || 4;
+    if (model !== 'realesr-animevideov3') scale = 4;
+    $('upRun').disabled = true;
+    $('upProgress').classList.remove('hidden'); $('upBar').classList.add('indet');
+    $('upStatus').textContent = 'Upscaling…'; $('upStatus').className = 'fr-status'; $('upStatus').onclick = null;
+    try {
+      const res = await window.api.aiUpscale({ inputPath: upState.path, model, scale, outputDir: state.outputDir });
+      $('upBar').classList.remove('indet'); $('upBar').style.width = '100%';
+      $('upStatus').textContent = `Saved (${fmtBytes(res.outSize)}) — click to open`; $('upStatus').className = 'fr-status done';
+      $('upStatus').onclick = () => window.api.showItem(res.outputPath);
+      toast('Upscale complete', { path: res.outputPath });
+      try { addRecent({ path: res.outputPath }); } catch { /* */ }
+    } catch (e) {
+      $('upBar').classList.remove('indet');
+      $('upStatus').textContent = 'Error: ' + ((e && e.message) || e); $('upStatus').className = 'fr-status error';
+    } finally { upUpdateRun(); }
+  });
+}
+
+// ---------- AI Background Removal (U²-Net / IS-Net, onnxruntime-node) ----------
+// Inference runs in MAIN (the ORT forward pass only); all image I/O — preprocess
+// to a 320x320 NCHW tensor, then composite the returned mask back onto the
+// original at full resolution — happens here on <canvas>. Output is a PNG.
+const rbState = { path: null, img: null, wired: false };
+const RB_SIZE = 320;
+const RB_MEAN = [0.485, 0.456, 0.406];
+const RB_STD = [0.229, 0.224, 0.225];
+
+async function openRemoveBg() {
+  hideAll(); state.section = 'tools'; state.ws = null;
+  $('toolHeader').classList.remove('hidden'); $('toolName').textContent = 'Background Removal';
+  setHero('Background Removal', 'AI cutout — remove an image background locally and export a transparent PNG');
+  $('removebgPanel').classList.remove('hidden');
+  if (!rbState.wired) { wireRemoveBg(); rbState.wired = true; }
+  enhanceSelects($('removebgPanel'));
+  const engineOk = !state.caps || state.caps.hasBgRemoval !== false;
+  $('rbNoEngine').classList.toggle('hidden', engineOk);
+  await rbRefreshModels();
+}
+async function rbRefreshModels() {
+  const sel = $('rbModel');
+  const engineOk = !state.caps || state.caps.hasBgRemoval !== false;
+  let installed = [];
+  try {
+    const all = (window.api.aimodels && await window.api.aimodels.list()) || [];
+    const list = Array.isArray(all) ? (all.bgremoval || []) : (all.bgremoval || []);
+    installed = (list || []).filter((m) => m.installed || m.isInstalled);
+  } catch { installed = []; }
+  const none = !engineOk || !installed.length;
+  // The no-model notice only shows when the engine itself is OK (otherwise the
+  // engine notice covers it).
+  $('rbNoModel').classList.toggle('hidden', !(engineOk && !installed.length));
+  if (none) {
+    sel.innerHTML = '<option value="">— none installed —</option>';
+  } else {
+    sel.innerHTML = installed.map((m) => `<option value="${mtbEsc(m.id)}">${mtbEsc(m.label || m.id)}</option>`).join('');
+  }
+  if (sel._csRender) sel._csRender();
+  rbUpdateRun();
+}
+function rbUpdateRun() {
+  const engineOk = !state.caps || state.caps.hasBgRemoval !== false;
+  const hasModel = !!($('rbModel').value);
+  $('rbRun').disabled = !(rbState.path && rbState.img && hasModel && engineOk);
+}
+function rbResolveBg() {
+  const choice = $('rbBg').value;
+  if (choice === 'transparent') return null;
+  if (choice === 'white') return '#ffffff';
+  if (choice === 'black') return '#000000';
+  return $('rbColor').value || '#ffffff';
+}
+// Build the normalized 1x3x320x320 NCHW Float32 tensor (R plane, then G, then B)
+// from a 320x320 ImageData, matching rembg/U²-Net preprocessing.
+function rbBuildTensor(imageData) {
+  const { data } = imageData; // RGBA, length 320*320*4
+  const n = RB_SIZE * RB_SIZE;
+  const out = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++) {
+    const r = data[i * 4] / 255, g = data[i * 4 + 1] / 255, b = data[i * 4 + 2] / 255;
+    out[i] = (r - RB_MEAN[0]) / RB_STD[0];
+    out[n + i] = (g - RB_MEAN[1]) / RB_STD[1];
+    out[2 * n + i] = (b - RB_MEAN[2]) / RB_STD[2];
+  }
+  return out;
+}
+function wireRemoveBg() {
+  $('rbBg').addEventListener('change', () => {
+    $('rbColorField').style.display = $('rbBg').value === 'custom' ? '' : 'none';
+  });
+  $('rbModel').addEventListener('change', rbUpdateRun);
+  $('rbLoad').addEventListener('click', async () => {
+    const paths = await window.api.pickFiles(); if (!paths || !paths.length) return;
+    rbState.path = paths[0]; $('rbName').textContent = baseName(paths[0]);
+    $('rbProgress').classList.add('hidden'); $('rbStatus').textContent = ''; $('rbStatus').onclick = null;
+    const img = new Image();
+    img.onload = () => {
+      rbState.img = img;
+      // Show the source on the preview canvas (fit within a sane preview box).
+      const cv = $('rbPreview');
+      const maxW = 640, maxH = 480;
+      const scale = Math.min(1, maxW / img.naturalWidth, maxH / img.naturalHeight);
+      cv.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      cv.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      const ctx = cv.getContext('2d');
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+      cv.classList.remove('hidden');
+      rbUpdateRun();
+    };
+    img.onerror = () => { rbState.img = null; toast('Could not load image', { kind: 'error' }); rbUpdateRun(); };
+    img.src = 'file:///' + paths[0].replace(/\\/g, '/');
+  });
+  $('rbRun').addEventListener('click', async () => {
+    if (!rbState.path || !rbState.img) return;
+    const modelId = $('rbModel').value; if (!modelId) return;
+    const bg = rbResolveBg();
+    $('rbRun').disabled = true;
+    $('rbProgress').classList.remove('hidden'); $('rbBar').classList.add('indet');
+    $('rbStatus').textContent = 'Removing background…'; $('rbStatus').className = 'fr-status'; $('rbStatus').onclick = null;
+    try {
+      const img = rbState.img;
+      const W = img.naturalWidth, H = img.naturalHeight;
+
+      // 1) Downscale source to 320x320 → ImageData → normalized tensor.
+      const small = document.createElement('canvas');
+      small.width = RB_SIZE; small.height = RB_SIZE;
+      const sctx = small.getContext('2d');
+      sctx.drawImage(img, 0, 0, RB_SIZE, RB_SIZE);
+      const tensor = rbBuildTensor(sctx.getImageData(0, 0, RB_SIZE, RB_SIZE));
+
+      // 2) Run the ORT forward pass in main → 320x320 mask (0..1).
+      const { mask } = await window.api.aiRemoveBg({ modelId, data: tensor, size: RB_SIZE });
+
+      // 3) Paint the mask onto a 320x320 canvas (alpha channel), then scale it up
+      //    to the original dimensions for compositing.
+      const maskCv = document.createElement('canvas');
+      maskCv.width = RB_SIZE; maskCv.height = RB_SIZE;
+      const mctx = maskCv.getContext('2d');
+      const mImg = mctx.createImageData(RB_SIZE, RB_SIZE);
+      for (let i = 0; i < RB_SIZE * RB_SIZE; i++) {
+        const a = Math.max(0, Math.min(255, Math.round(mask[i] * 255)));
+        mImg.data[i * 4] = a; mImg.data[i * 4 + 1] = a; mImg.data[i * 4 + 2] = a; mImg.data[i * 4 + 3] = 255;
+      }
+      mctx.putImageData(mImg, 0, 0);
+
+      const maskFull = document.createElement('canvas');
+      maskFull.width = W; maskFull.height = H;
+      const mfctx = maskFull.getContext('2d');
+      mfctx.imageSmoothingEnabled = true;
+      mfctx.drawImage(maskCv, 0, 0, W, H);
+      const maskData = mfctx.getImageData(0, 0, W, H).data;
+
+      // 4) Composite: original RGB with alpha = mask value.
+      const outCv = document.createElement('canvas');
+      outCv.width = W; outCv.height = H;
+      const octx = outCv.getContext('2d');
+      octx.drawImage(img, 0, 0, W, H);
+      const od = octx.getImageData(0, 0, W, H);
+      for (let i = 0, n = W * H; i < n; i++) {
+        // mask is grayscale → take the red channel as the alpha multiplier.
+        od.data[i * 4 + 3] = Math.round(od.data[i * 4 + 3] * (maskData[i * 4] / 255));
+      }
+      octx.putImageData(od, 0, 0);
+
+      // 5) If a background color was chosen, paint it BEHIND the cutout.
+      let finalCv = outCv;
+      if (bg) {
+        const bgCv = document.createElement('canvas');
+        bgCv.width = W; bgCv.height = H;
+        const bctx = bgCv.getContext('2d');
+        bctx.fillStyle = bg; bctx.fillRect(0, 0, W, H);
+        bctx.drawImage(outCv, 0, 0);
+        finalCv = bgCv;
+      }
+
+      // 6) Show the result on the preview + export as a PNG.
+      const cv = $('rbPreview');
+      const scale = Math.min(1, 640 / W, 480 / H);
+      cv.width = Math.max(1, Math.round(W * scale));
+      cv.height = Math.max(1, Math.round(H * scale));
+      const pctx = cv.getContext('2d');
+      pctx.clearRect(0, 0, cv.width, cv.height);
+      pctx.drawImage(finalCv, 0, 0, cv.width, cv.height);
+
+      const dataUrl = finalCv.toDataURL('image/png');
+      const fname = 'MTB_' + baseName(rbState.path).replace(/\.[^.]+$/, '') + '_nobg.png';
+      const a = document.createElement('a');
+      a.href = dataUrl; a.download = fname;
+      document.body.appendChild(a); a.click(); a.remove();
+
+      $('rbBar').classList.remove('indet'); $('rbBar').style.width = '100%';
+      $('rbStatus').textContent = `Saved ${fname}`; $('rbStatus').className = 'fr-status done';
+      toast('Background removed');
+    } catch (e) {
+      $('rbBar').classList.remove('indet');
+      $('rbStatus').textContent = 'Error: ' + ((e && e.message) || e); $('rbStatus').className = 'fr-status error';
+    } finally { rbUpdateRun(); }
   });
 }
 
@@ -2775,6 +3270,7 @@ async function init() {
   enhanceSelects(document);
   // Single-instance "open another?" prompt.
   window.api.onSecondInstance(() => $('instanceModal').classList.remove('hidden'));
+  wireFirstRun();
   $('instCancel').addEventListener('click', () => $('instanceModal').classList.add('hidden'));
   $('instOpen').addEventListener('click', () => { window.api.newWindow(); $('instanceModal').classList.add('hidden'); });
   // Update notice.

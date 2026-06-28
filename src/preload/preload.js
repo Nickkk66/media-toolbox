@@ -41,6 +41,25 @@ contextBridge.exposeInMainWorld('api', {
   ytCancel: () => ipcRenderer.invoke('yt:cancel'),
   onYtProgress: (cb) => ipcRenderer.on('yt:progress', (_e, d) => cb(d)),
 
+  // AI Model Manager (Settings → local ai)
+  aimodels: {
+    list: () => ipcRenderer.invoke('aimodel:list'),
+    download: (feature, id) => ipcRenderer.invoke('aimodel:download', { feature, id }),
+    remove: (feature, id) => ipcRenderer.invoke('aimodel:remove', { feature, id }),
+    onProgress: (cb) => ipcRenderer.on('aimodel:progress', (_e, p) => cb(p)),
+  },
+
+  // First-run AI model setup (installer-chosen models download on first launch)
+  onFirstRunStart: (cb) => ipcRenderer.on('firstrun:start', (_e, d) => cb(d)),
+  onFirstRunDone: (cb) => ipcRenderer.on('firstrun:done', (_e, d) => cb(d)),
+
+  // Local AI tools (whisper transcription / Real-ESRGAN upscale / bg removal)
+  aiTranscribe: (opts) => ipcRenderer.invoke('ai:transcribe', opts),
+  aiUpscale: (opts) => ipcRenderer.invoke('ai:upscale', opts),
+  aiRemoveBg: (opts) => ipcRenderer.invoke('ai:removebg', opts),
+  onAiTranscribeProgress: (cb) => ipcRenderer.on('ai:transcribe:progress', (_e, d) => cb(d)),
+  onAiUpscaleProgress: (cb) => ipcRenderer.on('ai:upscale:progress', (_e, d) => cb(d)),
+
   // Window controls (custom frameless titlebar)
   winMinimize: () => ipcRenderer.invoke('win:minimize'),
   winMaximize: () => ipcRenderer.invoke('win:maximize'),

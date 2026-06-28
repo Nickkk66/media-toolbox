@@ -110,7 +110,7 @@ const CONVERT_CATEGORIES = [
 const COMPRESS_CATEGORIES = [
   {
     name: 'Video & Audio', icon: 'video', items: [
-      { id: 'video-compressor', label: 'Video Compressor', engine: 'compress', mediaType: 'video', accept: VIDEO, tags: ['compress', 'shrink', 'smaller', 'reduce size', 'video', 'mp4', 'mp4 compressor'] },
+      { id: 'video-compressor', label: 'Video Compressor', engine: 'compress', mediaType: 'video', accept: VIDEO, tags: ['video', 'compress', 'shrink', 'smaller', 'make smaller', 'reduce size', 'mp4', 'mp4 compressor'] },
       { id: 'mp3-compressor', label: 'MP3 Compressor', engine: 'compress', mediaType: 'audio', accept: AUDIO, out: 'mp3', tags: ['mp3', 'compress', 'shrink', 'audio', 'reduce size'] },
       { id: 'wav-compressor', label: 'WAV Compressor', engine: 'compress', mediaType: 'audio', accept: AUDIO, out: 'wav', tags: ['wav', 'compress', 'shrink', 'audio', 'reduce size'] },
     ],
@@ -140,7 +140,7 @@ const TOOL_CATEGORIES = [
     name: 'Video Tools', icon: 'video', items: [
       { id: 'trim-video', label: 'Trim Video', engine: 'op', mediaType: 'videoop', op: 'trim', accept: VIDEO, tags: ['trim', 'cut', 'clip', 'split', 'video', 'shorten'] },
       { id: 'crop-video', label: 'Crop Video', engine: 'op', mediaType: 'videoop', op: 'crop', accept: VIDEO, tags: ['crop', 'cut', 'frame', 'aspect', 'video', 'trim edges'] },
-      { id: 'stretch-video', label: 'Stretch Video', engine: 'stretch', accept: VIDEO, tags: ['stretch', 'resize', 'resolution', 'squeeze', 'aspect', 'video', 'downscale', 'downscaler', 'reduce resolution'] },
+      { id: 'stretch-video', label: 'Stretch Video', engine: 'stretch', accept: VIDEO, tags: ['video', 'resize', 'resolution', 'downscale', 'downscaler', 'smaller', 'shrink', 'lower resolution', 'stretch', 'aspect'] },
       { id: 'video-speed', label: 'Video Speed', engine: 'op', mediaType: 'videoop', op: 'speed', accept: VIDEO, tags: ['speed', 'slow motion', 'fast', 'slowmo', 'timelapse', 'tempo', 'video'] },
       { id: 'fps-changer', label: 'FPS Changer', engine: 'fpspreview', accept: VIDEO, tags: ['fps', 'frame rate', 'framerate', 'smooth', 'interpolate', '60fps', 'video'] },
       { id: 'stabilize-video', label: 'Video Stabilizer', engine: 'op', mediaType: 'videoop', op: 'stabilize', accept: VIDEO, tags: ['stabilize', 'stabilizer', 'shaky', 'smooth', 'steady', 'deshake', 'video'] },
@@ -150,19 +150,22 @@ const TOOL_CATEGORIES = [
     name: 'Audio Tools', icon: 'audio', items: [
       { id: 'trim-audio', label: 'Trim Audio', engine: 'op', mediaType: 'audioop', op: 'trim', accept: AUDIO, tags: ['trim', 'cut', 'clip', 'audio', 'shorten', 'music'] },
       { id: 'audio-denoise', label: 'Audio Denoise', engine: 'op', mediaType: 'audioop', op: 'denoise', accept: AUDIO, tags: ['denoise', 'noise', 'clean', 'hiss', 'background noise', 'audio', 'reduce'] },
+      { id: 'transcribe', label: 'Subtitle / Transcript Extractor', engine: 'transcribe', accept: VIDEO.concat(AUDIO), tags: ['subtitle', 'subtitles', 'transcribe', 'transcript', 'caption', 'captions', 'speech to text', 'whisper', 'srt', 'text'] },
     ],
   },
   {
     name: 'Image Tools', icon: 'image', items: [
-      { id: 'gif-maker', label: 'GIF Maker', engine: 'op', mediaType: 'gif', op: 'gif', accept: VIDEO, out: 'gif', tags: ['gif', 'animation', 'animated', 'loop', 'meme'] },
-      { id: 'resize-image', label: 'Resize Image', engine: 'op', mediaType: 'imageop', op: 'resize', accept: IMAGE, tags: ['resize', 'scale', 'dimensions', 'width', 'height', 'image', 'downscale', 'downscaler', 'smaller', 'reduce resolution', 'shrink'] },
+      { id: 'gif-maker', label: 'GIF Maker', engine: 'op', mediaType: 'gif', op: 'gif', accept: VIDEO, out: 'gif', tags: ['gif', 'make gif', 'create gif', 'animation', 'animated', 'loop', 'meme', 'video to gif'] },
+      { id: 'resize-image', label: 'Resize Image', engine: 'op', mediaType: 'imageop', op: 'resize', accept: IMAGE, tags: ['image', 'resize', 'downscale', 'downscaler', 'smaller', 'shrink', 'dimensions', 'width', 'height', 'resolution'] },
       { id: 'crop-image', label: 'Crop Image', engine: 'op', mediaType: 'imageop', op: 'crop', accept: IMAGE, tags: ['crop', 'cut', 'trim', 'frame', 'image'] },
       { id: 'color-picker', label: 'Color Picker', engine: 'colorpicker', tags: ['color', 'colour', 'eyedropper', 'hex', 'rgb', 'pick'] },
       { id: 'rotate-image', label: 'Rotate Image', engine: 'op', mediaType: 'imageop', op: 'rotate', accept: IMAGE, tags: ['rotate', 'turn', 'orientation', 'angle', 'image'] },
       { id: 'flip-image', label: 'Flip Image', engine: 'op', mediaType: 'imageop', op: 'flip', accept: IMAGE, tags: ['flip', 'mirror', 'horizontal', 'vertical', 'image'] },
-      { id: 'image-enlarger', label: 'Image Enlarger', engine: 'op', mediaType: 'imageop', op: 'enlarge', accept: IMAGE, tags: ['enlarge', 'bigger', 'scale up', 'enlarger', 'image'] },
-      { id: 'image-upscaler', label: 'Image Upscaler', engine: 'op', mediaType: 'imageop', op: 'upscale', accept: IMAGE, tags: ['upscale', 'upscaler', 'enhance', 'hd', 'super resolution', 'lanczos', 'pixel art', 'image'] },
-      { id: 'photo-effects', label: 'Photo Effects', engine: 'photofx', tags: ['effects', 'filter', 'dither', 'ascii', 'halftone', 'glitch', 'retro', 'shader', 'photo', 'image', 'vignette', 'crt'] },
+      { id: 'image-enlarger', label: 'Image Enlarger', engine: 'op', mediaType: 'imageop', op: 'enlarge', accept: IMAGE, tags: ['enlarge', 'enlarger', 'bigger', 'scale up', 'upscale', 'photo', 'image'] },
+      { id: 'image-upscaler', label: 'Image Upscaler', engine: 'op', mediaType: 'imageop', op: 'upscale', accept: IMAGE, tags: ['upscale', 'upscaler', 'enhance', 'hd', 'super resolution', 'photo', 'pixel art', 'image'] },
+      { id: 'image-upscaler-ai', label: 'AI Image Upscaler', engine: 'upscaleai', accept: IMAGE, tags: ['upscale', 'upscaler', 'enhance', 'super resolution', 'ai', 'photo', 'hd', 'enlarge', 'image'] },
+      { id: 'remove-bg', label: 'Background Removal', engine: 'removebg', accept: IMAGE, tags: ['background', 'remove background', 'remove bg', 'transparent', 'cutout', 'matting', 'knockout', 'png', 'ai', 'image'] },
+      { id: 'photo-effects', label: 'Photo Effects', engine: 'photofx', tags: ['effects', 'filter', 'dither', 'ascii', 'halftone', 'glitch', 'retro', 'photo', 'image', 'crt'] },
     ],
   },
   {
@@ -186,7 +189,7 @@ const TOOL_CATEGORIES = [
       { id: 'unit-converter', label: 'Unit Converter', engine: 'special', tags: ['unit', 'measure', 'length', 'weight', 'temperature', 'convert'] },
       { id: 'time-converter', label: 'Time Converter', engine: 'special', tags: ['time', 'timezone', 'unix', 'timestamp', 'clock', 'convert'] },
       { id: 'archive-converter', label: 'Archive Converter', engine: 'special', need: 'hasSevenzip', tags: ['archive', 'zip', '7z', 'tar', 'compress', 'extract'] },
-      { id: 'batch-rename', label: 'Batch Rename', engine: 'batchrename', tags: ['mass', 'mass renamer', 'mass rename', 'rename', 'batch', 'bulk', 'bulk rename', 'rename multiple', 'rename files', 'sequential', 'numbering', 'find replace', 'files'] },
+      { id: 'batch-rename', label: 'Batch Rename', engine: 'batchrename', tags: ['mass', 'mass renamer', 'rename', 'batch', 'bulk', 'bulk rename', 'rename files', 'sequential', 'find replace', 'files'] },
     ],
   },
 ];
