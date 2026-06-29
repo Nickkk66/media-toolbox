@@ -44,7 +44,10 @@
   <div class="wrap nav-in">
     <a class="brand" href="#top"><span class="mark"><svg viewBox="0 0 24 24"><use href="#i-mark"/></svg></span><span class="brand-name">media toolbox<span class="ver">v1.1</span></span></a>
     <nav class="nav-links">
-      <a class="navlink docs-link" href="https://github.com/pipelinear/media-toolbox/releases/latest"><span class="ic bubble"><svg viewBox="0 0 28 29"><use href="#i-bubble"/></svg></span> Releases</a>
+      <div class="rel" id="rel">
+        <a class="navlink docs-link" href="https://github.com/pipelinear/media-toolbox/releases/latest"><span class="ic bubble"><svg viewBox="0 0 28 29"><use href="#i-bubble"/></svg></span> Releases</a>
+        <div class="rel-menu" id="relMenu" role="menu" aria-label="Download by version"><div class="rel-empty">Loading releases&hellip;</div></div>
+      </div>
       <a class="btn light small dl" href="https://github.com/pipelinear/media-toolbox/releases/latest/download/media-toolbox-Setup.exe">
         <span class="dl-ic"><svg viewBox="0 0 24 24"><use href="#i-win"/></svg></span><span class="dl-label">Download for Windows</span><span class="dl-arrow"><svg viewBox="0 0 24 24"><use href="#i-arr"/></svg></span>
       </a>
@@ -71,7 +74,7 @@
       <div class="ambient" id="ambient" aria-hidden="true"></div>
       <button class="shot" id="heroShot" aria-label="Play the media toolbox promo">
         <video id="heroVideo" class="hero-vid" playsinline preload="auto" poster="media/promo-poster.png">
-          <source src="media/promo.mp4?v=3" type="video/mp4" />
+          <source src="media/promo.mp4?v=4" type="video/mp4" />
         </video>
         <span class="play-hint" id="playHint"><span class="play-ic"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></span> Watch it work</span>
       </button>
@@ -90,7 +93,7 @@
       <div class="f f-edit"><span class="fic"><svg viewBox="0 0 24 24"><use href="#i-edit"/></svg></span><h3>Edit &amp;<br/>trim</h3></div>
       <div class="f f-download"><span class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><g class="dl-up"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/></g><path class="dl-base" d="M5 21h14"/></svg></span><h3>Download<br/>video</h3></div>
       <div class="f f-cut"><span class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><g class="blade blade-a"><circle cx="6" cy="6" r="3"/><path d="M8.1 8.1 20 16"/></g><g class="blade blade-b"><circle cx="6" cy="18" r="3"/><path d="M8.1 15.9 20 8"/></g></svg></span><h3>Remove<br/>backgrounds</h3></div>
-      <div class="f f-mic"><span class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path class="w w1" d="M16.7 2.7A6 6 0 0 1 19.9 6.4"/><path class="w w2" d="M18 -0.1A9 9 0 0 1 22.7 5.6"/></svg></span><h3>Transcribe<br/>audio</h3></div>
+      <div class="f f-mic"><span class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><g transform="translate(-2.6 -2.6)"><path class="w w1" d="M16.7 2.7A6 6 0 0 1 19.9 6.4"/><path class="w w2" d="M18 -0.1A9 9 0 0 1 22.7 5.6"/></g></svg></span><h3>Transcribe<br/>audio</h3></div>
       <div class="f f-ai"><span class="fic"><svg viewBox="0 0 24 24"><path class="aimain" d="M12 2 13.7 9.1 21 12 13.7 14.9 12 22 10.3 14.9 3 12 10.3 9.1Z" fill="currentColor"/><path class="aimini" d="M18.6 3 19.3 5.9 22 6.6 19.3 7.3 18.6 10.2 17.9 7.3 15 6.6 17.9 5.9Z" fill="currentColor"/></svg></span><h3>On-device<br/>AI</h3></div>
       <div class="f f-bolt"><span class="fic"><svg viewBox="0 0 24 24"><path class="boltpath" d="M13 2 4 14h7l-1 8 9-12h-7z" fill="currentColor"/></svg></span><h3>Blazing fast<br/><span class="circword">native app<svg class="ncircle" viewBox="0 0 240 92" preserveAspectRatio="none" aria-hidden="true"><path pathLength="1" d="M128 12C190 10 232 34 226 56 220 80 120 90 64 82 18 75 8 44 30 26 52 12 98 11 122 16 126 17 126 20 124 22" fill="none" stroke="#b49deb" stroke-width="4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg></span></h3></div>
     </div>

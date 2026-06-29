@@ -179,3 +179,54 @@
   }
   window.addEventListener('scroll', onScroll, { passive: true });
 })();
+
+// Releases dropdown: on first hover of "Releases", pull the published releases
+// from the GitHub API and list each version with direct per-OS download links,
+// so the visitor downloads any build in place instead of being sent to GitHub.
+(function () {
+  var rel = document.getElementById('rel');
+  var menu = document.getElementById('relMenu');
+  if (!rel || !menu) return;
+  var REPO = 'pipelinear/media-toolbox';
+  var loaded = false;
+
+  // one preferred installer per OS, in display order, if present in the release
+  function pickAssets(assets) {
+    var order = [['Windows', 'setup.exe'], ['macOS', 'mac.dmg'], ['Linux', 'linux.appimage']];
+    var out = [];
+    order.forEach(function (o) {
+      for (var i = 0; i < assets.length; i++) {
+        if (assets[i].name.toLowerCase().indexOf(o[1]) > -1) {
+          out.push({ label: o[0], url: assets[i].browser_download_url });
+          break;
+        }
+      }
+    });
+    return out;
+  }
+
+  function render(releases) {
+    if (!releases || !releases.length) { menu.innerHTML = '<div class="rel-empty">No releases yet.</div>'; return; }
+    var html = '';
+    releases.slice(0, 6).forEach(function (r) {
+      var ver = r.name || r.tag_name || 'release';
+      var picks = pickAssets(r.assets || []);
+      var links = picks.map(function (p) { return '<a href="' + p.url + '">' + p.label + '</a>'; }).join('');
+      if (!links) links = '<a href="' + r.html_url + '">GitHub</a>';
+      html += '<div class="rel-row"><span class="rel-ver">' + ver + '</span><span class="rel-os">' + links + '</span></div>';
+    });
+    menu.innerHTML = html;
+  }
+
+  function load() {
+    if (loaded) return; loaded = true;
+    fetch('https://api.github.com/repos/' + REPO + '/releases?per_page=8', { headers: { Accept: 'application/vnd.github+json' } })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (d) { render(d.filter(function (x) { return !x.draft; })); })
+      .catch(function () {
+        menu.innerHTML = '<div class="rel-empty"><a href="https://github.com/' + REPO + '/releases">Open releases on GitHub &rarr;</a></div>';
+      });
+  }
+  rel.addEventListener('pointerenter', load);
+  rel.addEventListener('focusin', load);
+})();

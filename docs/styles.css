@@ -122,6 +122,29 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
 .docs-link .bubble{ transition:transform .28s cubic-bezier(.34,1.3,.5,1); transform-origin:55% 85%; }
 .docs-link:hover .bubble{ transform:rotate(-14deg); }
 
+/* Releases dropdown: hovering "Releases" reveals a cream popover listing each
+   published version with direct per-OS download links (pulled from the GitHub
+   releases API in main.js) — so visitors grab a build without leaving the site. */
+.rel{ position:relative; display:inline-flex; }
+.rel-menu{ position:absolute; top:calc(100% + 12px); right:0; min-width:248px;
+  background:var(--cream); border-radius:14px; padding:7px;
+  box-shadow:0 22px 46px -20px rgba(64,42,16,.5), inset 0 0 0 1px var(--line);
+  opacity:0; visibility:hidden; transform:translateY(6px);
+  transition:opacity .2s ease, transform .2s ease, visibility .2s ease; z-index:60; }
+/* invisible hover bridge across the gap so the menu doesn't drop while crossing */
+.rel-menu::before{ content:""; position:absolute; top:-14px; left:0; right:0; height:14px; }
+.rel:hover .rel-menu, .rel:focus-within .rel-menu{ opacity:1; visibility:visible; transform:none; }
+.rel-row{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+  padding:9px 11px; border-radius:9px; }
+.rel-row + .rel-row{ margin-top:1px; }
+.rel-row:hover{ background:var(--cream-2); }
+.rel-ver{ font-family:"Bricolage Grotesque",sans-serif; font-weight:800; font-size:.98rem; color:var(--ink); white-space:nowrap; }
+.rel-os{ display:inline-flex; gap:10px; }
+.rel-os a{ font-weight:700; font-size:.82rem; color:var(--ink-soft); transition:color .15s ease; }
+.rel-os a:hover{ color:var(--ink); }
+.rel-empty{ padding:11px 12px; color:var(--ink-soft); font-size:.9rem; }
+.rel-empty a{ color:var(--ink); font-weight:700; }
+
 /* ---------- hero ---------- */
 .hero{ padding:64px 0 40px; text-align:center; }
 .hero h1{
