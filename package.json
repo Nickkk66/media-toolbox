@@ -1,7 +1,7 @@
 {
   "name": "video-compressor",
-  "version": "1.0.0",
-  "description": "Local video compressor with no file-size limit. Bundles ffmpeg, runs fully offline.",
+  "version": "1.0.1",
+  "description": "Local media toolbox with no file-size limit. Engines download on demand; runs offline once set up.",
   "author": "Nicky",
   "license": "MIT",
   "main": "src/main/main.js",

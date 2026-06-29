@@ -24,20 +24,35 @@ try { app = require('electron').app; } catch { app = null; }
 // Bump the tag (and re-upload assets) when an engine binary needs updating.
 const BASE_URL = 'https://github.com/pipelinear/media-toolbox/releases/download/engines-v1/';
 
+// Per-OS bits. On Windows binaries carry .exe; Ghostscript's CLI is gswin64c on
+// Windows but gs everywhere else. Mac/Linux binaries need the executable bit set
+// after extraction.
+const EXE = process.platform === 'win32' ? '.exe' : '';
+const GS_BIN = process.platform === 'win32' ? 'gswin64c' : 'gs';
+
+// os-arch slug used in the asset names, e.g. ffmpeg-mac-arm64.zip.
+function platformKey() {
+  const os = process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux';
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  return `${os}-${arch}`;
+}
+
 // key -> bundle metadata. `subdir` matches the folders ffmpegPath resolves.
-// `verify` is the set of files that must exist for the engine to count as
-// installed. `bytes` is an approximate download size for the progress UI.
+// `name` builds the asset name (`<name>-<os>-<arch>.zip`). `verify` lists the
+// files that must exist for the engine to count as installed (platform-aware).
 const ENGINES = {
-  ffmpeg:      { subdir: 'bin',        asset: 'ffmpeg-win-x64.zip',      verify: ['ffmpeg.exe', 'ffprobe.exe'], label: 'media engine (FFmpeg)',     bytes: 63 * 1024 * 1024 },
-  ytdlp:       { subdir: 'bin',        asset: 'ytdlp-win-x64.zip',       verify: ['yt-dlp.exe'],                label: 'downloader (yt-dlp)',       bytes: 18 * 1024 * 1024 },
-  sevenzip:    { subdir: 'bin',        asset: 'sevenzip-win-x64.zip',    verify: ['7za.exe'],                   label: 'archiver (7-Zip)',          bytes: 1 * 1024 * 1024 },
-  ghostscript: { subdir: 'gs',         asset: 'ghostscript-win-x64.zip', verify: ['gswin64c.exe', 'gsdll64.dll'], label: 'PDF engine (Ghostscript)', bytes: 13 * 1024 * 1024 },
-  qpdf:        { subdir: 'qpdf',       asset: 'qpdf-win-x64.zip',        verify: ['qpdf.exe'],                  label: 'PDF tool (qpdf)',           bytes: 4 * 1024 * 1024 },
-  exiftool:    { subdir: 'exiftool',   asset: 'exiftool-win-x64.zip',    verify: ['exiftool.exe'],              label: 'metadata (ExifTool)',       bytes: 11 * 1024 * 1024 },
-  realesrgan:  { subdir: 'realesrgan', asset: 'realesrgan-win-x64.zip',  verify: ['realesrgan-ncnn-vulkan.exe'], label: 'upscaler (Real-ESRGAN)',   bytes: 43 * 1024 * 1024 },
-  whisper:     { subdir: 'whisper',    asset: 'whisper-win-x64.zip',     verify: ['whisper-cli.exe'],           label: 'transcriber (Whisper)',     bytes: 16 * 1024 * 1024 },
-  piper:       { subdir: 'piper',      asset: 'piper-win-x64.zip',       verify: ['piper.exe'],                 label: 'text-to-speech (Piper)',    bytes: 22 * 1024 * 1024 },
+  ffmpeg:      { subdir: 'bin',        name: 'ffmpeg',      verify: [`ffmpeg${EXE}`, `ffprobe${EXE}`],     label: 'media engine (FFmpeg)',  bytes: 63 * 1024 * 1024 },
+  ytdlp:       { subdir: 'bin',        name: 'ytdlp',       verify: [`yt-dlp${EXE}`],                      label: 'downloader (yt-dlp)',    bytes: 18 * 1024 * 1024 },
+  sevenzip:    { subdir: 'bin',        name: 'sevenzip',    verify: [`7za${EXE}`],                         label: 'archiver (7-Zip)',       bytes: 1 * 1024 * 1024 },
+  ghostscript: { subdir: 'gs',         name: 'ghostscript', verify: [`${GS_BIN}${EXE}`],                   label: 'PDF engine (Ghostscript)', bytes: 13 * 1024 * 1024 },
+  qpdf:        { subdir: 'qpdf',       name: 'qpdf',        verify: [`qpdf${EXE}`],                        label: 'PDF tool (qpdf)',        bytes: 4 * 1024 * 1024 },
+  exiftool:    { subdir: 'exiftool',   name: 'exiftool',    verify: [`exiftool${EXE}`],                    label: 'metadata (ExifTool)',    bytes: 11 * 1024 * 1024 },
+  realesrgan:  { subdir: 'realesrgan', name: 'realesrgan',  verify: [`realesrgan-ncnn-vulkan${EXE}`],      label: 'upscaler (Real-ESRGAN)', bytes: 43 * 1024 * 1024 },
+  whisper:     { subdir: 'whisper',    name: 'whisper',     verify: [`whisper-cli${EXE}`],                 label: 'transcriber (Whisper)',  bytes: 16 * 1024 * 1024 },
+  piper:       { subdir: 'piper',      name: 'piper',       verify: [`piper${EXE}`],                       label: 'text-to-speech (Piper)', bytes: 22 * 1024 * 1024 },
 };
+
+function assetName(key) { return `${ENGINES[key].name}-${platformKey()}.zip`; }
 
 function cacheRoot() {
   if (app && typeof app.getPath === 'function') {
@@ -71,10 +86,10 @@ function isInstalled(key) {
   return searchDirs(e.subdir).some((d) => presentIn(d, e.verify));
 }
 
-// True if the engine is installed OR can be fetched on this platform — used so
-// the UI keeps a tool enabled and triggers the download on first use.
+// True if the engine is installed OR can be fetched — used so the UI keeps a
+// tool enabled and triggers the download on first use.
 function isAvailable(key) {
-  return isInstalled(key) || (process.platform === 'win32' && !!ENGINES[key]);
+  return isInstalled(key) || !!ENGINES[key];
 }
 
 // Stream a URL to disk, following GitHub's redirect to the asset CDN, reporting
@@ -103,20 +118,42 @@ function downloadTo(url, dest, onFrac, redirects = 6) {
   });
 }
 
-// Unpack a zip with Windows' built-in Expand-Archive (no extra dependency).
+// Unpack a zip: Windows uses the built-in Expand-Archive; macOS/Linux use the
+// standard `unzip` (no extra dependency on any platform).
 function unzip(zipPath, destDir) {
   return new Promise((resolve, reject) => {
     try { fs.mkdirSync(destDir, { recursive: true }); } catch { /* */ }
-    const cmd = `Expand-Archive -LiteralPath ${JSON.stringify(zipPath)} -DestinationPath ${JSON.stringify(destDir)} -Force`;
-    const ps = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', cmd], { windowsHide: true });
+    let proc;
+    if (process.platform === 'win32') {
+      const cmd = `Expand-Archive -LiteralPath ${JSON.stringify(zipPath)} -DestinationPath ${JSON.stringify(destDir)} -Force`;
+      proc = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', cmd], { windowsHide: true });
+    } else {
+      proc = spawn('unzip', ['-o', zipPath, '-d', destDir]);
+    }
     let err = '';
-    ps.stderr.on('data', (d) => { err += d.toString(); });
-    ps.on('error', reject);
-    ps.on('close', (code) => {
+    proc.stderr.on('data', (d) => { err += d.toString(); });
+    proc.on('error', reject);
+    proc.on('close', (code) => {
       if (code === 0) return resolve();
       reject(new Error('Could not unpack the engine: ' + (err.split('\n').filter(Boolean).pop() || `exit ${code}`)));
     });
   });
+}
+
+// Mac/Linux binaries lose their executable bit through zip — restore it on every
+// extracted file (harmless for the odd data file).
+function makeExecutable(dir) {
+  if (process.platform === 'win32') return;
+  const walk = (d) => {
+    let entries = [];
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else { try { fs.chmodSync(full, 0o755); } catch { /* */ } }
+    }
+  };
+  walk(dir);
 }
 
 const _pending = new Map(); // key -> in-flight ensure() promise (dedupes parallel calls)
@@ -128,7 +165,6 @@ function ensure(key, onProgress) {
   const e = ENGINES[key];
   if (!e) return Promise.reject(new Error(`Unknown engine: ${key}`));
   if (isInstalled(key)) return Promise.resolve(engineDir(key));
-  if (process.platform !== 'win32') return Promise.reject(new Error(`${e.label} isn't available on this platform.`));
   if (_pending.has(key)) return _pending.get(key);
 
   const task = (async () => {
@@ -140,9 +176,10 @@ function ensure(key, onProgress) {
     const report = (phase, percent) => { try { onProgress && onProgress({ key, label: e.label, phase, percent }); } catch { /* */ } };
     report('download', 0);
     try {
-      await downloadTo(BASE_URL + e.asset, tmpZip, (frac) => report('download', Math.round(frac * 100)));
+      await downloadTo(BASE_URL + assetName(key), tmpZip, (frac) => report('download', Math.round(frac * 100)));
       report('extract', 100);
       await unzip(tmpZip, dir);
+      makeExecutable(dir);
       if (!presentIn(dir, e.verify)) throw new Error(`${e.label} unpacked but is missing files; please try again.`);
       report('done', 100);
       return dir;

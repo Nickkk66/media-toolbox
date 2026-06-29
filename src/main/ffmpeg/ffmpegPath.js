@@ -78,7 +78,8 @@ function locate(slot, name, subdir) {
 module.exports = {
   get ffmpeg() { return locate('ffmpeg', 'ffmpeg', 'bin'); },
   get ffprobe() { return locate('ffprobe', 'ffprobe', 'bin'); },
-  get ghostscript() { return locate('gs', 'gswin64c', 'gs'); },
+  // Ghostscript's CLI is gswin64c on Windows, plain `gs` on macOS/Linux.
+  get ghostscript() { return locate('gs', process.platform === 'win32' ? 'gswin64c' : 'gs', 'gs'); },
   get ytdlp() { return locate('ytdlp', 'yt-dlp', 'bin'); },
   get sevenzip() { return locate('sevenzip', '7za', 'bin'); },
   get qpdf() { return locate('qpdf', 'qpdf', 'qpdf'); },

@@ -6,6 +6,9 @@ directories:
   output: build
   buildResources: assets
 
+# Prune onnxruntime-node to the build's own platform/arch (~260 MB -> ~60 MB).
+afterPack: scripts/afterPack.js
+
 files:
   - "src/**"
   - "package.json"
@@ -20,57 +23,21 @@ asarUnpack:
   # src/songs so the About player can read embedded metadata/cover art if present.
   - "src/songs/**"
 
-# Bundle ffmpeg/ffprobe so the installer is fully self-contained.
-# These land in <app>/resources/bin and are resolved by ffmpegPath.js.
-extraResources:
-  - from: vendor/bin
-    to: bin
-    filter:
-      - "ffmpeg.exe"
-      - "ffprobe.exe"
-      - "yt-dlp.exe"
-      - "7za.exe"
-  - from: vendor/gs
-    to: gs
-    filter:
-      - "gswin64c.exe"
-      - "gsdll64.dll"
-  - from: vendor/qpdf
-    to: qpdf
-    filter:
-      - "*.exe"
-      - "*.dll"
-  # exiftool.exe REQUIRES its exiftool_files/ folder beside it — bundle both.
-  - from: vendor/exiftool
-    to: exiftool
-    filter:
-      - "exiftool.exe"
-      - "exiftool_files/**"
-  # Real-ESRGAN upscaler: exe + runtime dll + bundled models.
-  - from: vendor/realesrgan
-    to: realesrgan
-    filter:
-      - "realesrgan-ncnn-vulkan.exe"
-      - "vcomp140.dll"
-      - "models/**"
-  # whisper.cpp transcriber: whisper-cli.exe + ggml/openblas DLLs (models are downloaded).
-  - from: vendor/whisper
-    to: whisper
-    filter:
-      - "whisper-cli.exe"
-      - "*.dll"
-  # Piper TTS: piper.exe + DLLs + espeak-ng-data (voices are downloaded).
-  - from: vendor/piper
-    to: piper
-    filter:
-      - "piper.exe"
-      - "*.dll"
-      - "*.ort"
-      - "espeak-ng-data/**"
+# NOTE: the heavy native engines (ffmpeg, yt-dlp, Ghostscript, qpdf, exiftool,
+# Real-ESRGAN, Whisper, Piper, 7-Zip) are NOT bundled. They download on first use
+# (per-OS) from the GitHub "engines-v1" release and cache under <userData>/engines
+# (see src/main/engines.js). That keeps every build tiny.
 
+# The web installer derives its package download URL from here.
+publish:
+  provider: github
+  owner: pipelinear
+  repo: media-toolbox
+
+# -------- Windows: tiny web installer + a self-contained portable --------
 win:
   target:
-    - target: nsis
+    - target: nsis-web
       arch: [x64]
     - target: portable
       arch: [x64]
@@ -78,30 +45,48 @@ win:
 
 nsis:
   oneClick: false
-  # The custom AI-models page function is only referenced in the installer, so
-  # the uninstaller compile pass emits a benign "function not referenced" (6010)
-  # warning. Do not treat NSIS warnings as fatal.
   warningsAsErrors: false
-  # perMachine + allowElevation => the installer requests admin (UAC) and installs
-  # for all users. This is the "run as admin" setup the project wants.
   perMachine: true
   allowElevation: true
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Video Compressor
-  # Branded "cool UI": custom welcome/finish sidebar + inner-page header + icons.
-  # Generated brand artwork (cream + M mark + pink accent) lives in assets/.
+  # Keep the public download link stable (the website / README point here).
+  artifactName: media-toolbox-Setup.${ext}
   installerIcon: assets/icon.ico
   uninstallerIcon: assets/icon.ico
   installerHeaderIcon: assets/icon.ico
   installerSidebar: assets/installerSidebar.bmp
   uninstallerSidebar: assets/uninstallerSidebar.bmp
   installerHeader: assets/installerHeader.bmp
-  # The optional "local-AI models" picker page is added by assets/installer.nsh,
-  # which electron-builder auto-includes as <buildResources>/installer.nsh
-  # (buildResources = assets). It records choices to $INSTDIR\ai-setup.json and
-  # the app downloads the chosen models on first launch (see src/main/main.js).
 
 portable:
-  artifactName: VideoCompressor-portable-${version}.exe
+  artifactName: media-toolbox-Portable.exe
+
+# -------- macOS: dmg (installer) + zip (portable), Apple Silicon, unsigned -----
+mac:
+  category: public.app-category.utilities
+  icon: assets/icon-1024.png
+  # Unsigned for now — users right-click → Open on first launch.
+  identity: null
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  artifactName: media-toolbox-mac.${ext}
+
+dmg:
+  artifactName: media-toolbox-mac.${ext}
+
+# -------- Linux: AppImage (portable) + deb (installer) --------
+linux:
+  category: Utility
+  icon: assets/icon-1024.png
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  artifactName: media-toolbox-linux.${ext}
