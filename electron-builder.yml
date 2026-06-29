@@ -78,10 +78,22 @@ win:
 
 nsis:
   oneClick: false
-  perMachine: false
+  # perMachine + allowElevation => the installer requests admin (UAC) and installs
+  # for all users. This is the "run as admin" setup the project wants.
+  perMachine: true
+  allowElevation: true
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+  createStartMenuShortcut: true
   shortcutName: Video Compressor
+  # Branded "cool UI": custom welcome/finish sidebar + inner-page header + icons.
+  # Generated brand artwork (cream + M mark + pink accent) lives in assets/.
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico
+  installerHeaderIcon: assets/icon.ico
+  installerSidebar: assets/installerSidebar.bmp
+  uninstallerSidebar: assets/uninstallerSidebar.bmp
+  installerHeader: assets/installerHeader.bmp
   # The optional "local-AI models" picker page is added by assets/installer.nsh,
   # which electron-builder auto-includes as <buildResources>/installer.nsh
   # (buildResources = assets). It records choices to $INSTDIR\ai-setup.json and
