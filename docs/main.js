@@ -60,6 +60,8 @@
   function play() {
     if (shot.classList.contains('playing')) return;
     shot.classList.add('playing');
+    // Played from a real click (user gesture), so sound is allowed.
+    video.muted = false;
     var p = video.play();
     if (p && p.catch) p.catch(function () {});
     if (!raf) sample();
