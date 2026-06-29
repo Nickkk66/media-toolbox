@@ -222,7 +222,7 @@
     if (loaded) return; loaded = true;
     fetch('https://api.github.com/repos/' + REPO + '/releases?per_page=8', { headers: { Accept: 'application/vnd.github+json' } })
       .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
-      .then(function (d) { render(d.filter(function (x) { return !x.draft; })); })
+      .then(function (d) { render(d.filter(function (x) { return !x.draft && /^v/i.test(x.tag_name || ''); })); })
       .catch(function () {
         menu.innerHTML = '<div class="rel-empty"><a href="https://github.com/' + REPO + '/releases">Open releases on GitHub &rarr;</a></div>';
       });
