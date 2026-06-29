@@ -325,25 +325,29 @@ body[data-theme="dark"] .rb-h { background: #fff; border-color: #1e1e23; }
 
 /* ---- on-brand custom checkbox (app-wide) ----
    The native OS checkbox looks foreign next to the hairline/zero-radius UI, so
-   every plain checkbox becomes a square, hairline-bordered box with an ink check
-   mark. Works in light AND dark (border + mark follow --steel / --ink, which
-   both flip per theme). The `.switch` toggle is a <button>, not a checkbox, so
-   it is untouched. */
+   every plain checkbox becomes a square, soft-hairline box with a bright PINK
+   fill + light checkmark when checked. The unchecked box uses a warm panel fill
+   so it reads as an empty control, and the border is the theme hairline (never
+   black). Border + accent both flip per theme (light / creme / dark) via the
+   overrides below. The `.switch` toggle is a <button>, not a checkbox, so it is
+   untouched. */
 input[type="checkbox"] {
   -webkit-appearance: none; appearance: none;
   width: 16px; height: 16px; flex: 0 0 auto; margin: 0;
-  border: 1px solid var(--steel); border-radius: 0; background: #fff;
+  border: 1px solid var(--steel); border-radius: 0; background: var(--canvas);
   display: inline-grid; place-content: center; cursor: pointer; position: relative;
   vertical-align: middle; transition: border-color .12s, background .12s;
 }
 body[data-theme="dark"] input[type="checkbox"] { background: #1e1e23; }
-input[type="checkbox"]:hover { border-color: var(--ink); }
-input[type="checkbox"]:checked { border-color: var(--ink); background: var(--ink); }
+/* Hover/focus warm-pink tint on the border (never black). */
+input[type="checkbox"]:hover { border-color: var(--accent); }
+/* Checked: fill with the pink accent + a clearly visible light checkmark. */
+input[type="checkbox"]:checked { border-color: var(--accent); background: var(--accent); }
 input[type="checkbox"]:checked::after {
   content: ""; width: 4px; height: 8px; margin-top: -1px;
-  border: solid var(--canvas); border-width: 0 2px 2px 0; transform: rotate(45deg);
+  border: solid #fff7ec; border-width: 0 2px 2px 0; transform: rotate(45deg);
 }
-input[type="checkbox"]:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type="checkbox"]:disabled { opacity: .45; cursor: not-allowed; }
 
 /* Color picker */
@@ -836,6 +840,12 @@ body[data-theme="dark"] input, body[data-theme="dark"] select, body[data-theme="
 body[data-theme="dark"] .cs-list, body[data-theme="dark"] .gh-avatar, body[data-theme="dark"] .cp-canvas,
 body[data-theme="dark"] .cp-swatch, body[data-theme="dark"] .yt-thumb, body[data-theme="dark"] .to-field input,
 body[data-theme="dark"] .to-field select { background: #1e1e23; }
+/* Dark checkbox: warm panel-empty box; checked = lighter pink (--accent #f48fb6)
+   with a light check. Theme-scoped so the pink fill outranks the generic dark
+   `input { background:#1e1e23 }` rule above. */
+body[data-theme="dark"] input[type="checkbox"]:hover { border-color: var(--accent); }
+body[data-theme="dark"] input[type="checkbox"]:checked { border-color: var(--accent); background: var(--accent); }
+body[data-theme="dark"] input[type="checkbox"]:checked::after { border-color: #fff7ec; }
 
 /* Dark mode readability — home cards, profile signature, flight card, audio player.
    Light mode is untouched; these only scope to the dark theme. */
@@ -891,7 +901,12 @@ body[data-theme="creme"] .cs-list, body[data-theme="creme"] .gh-avatar, body[dat
 body[data-theme="creme"] .cp-swatch, body[data-theme="creme"] .yt-thumb, body[data-theme="creme"] .to-field input,
 body[data-theme="creme"] .to-field select { background: #f6e3cf; }
 body[data-theme="creme"] .navsearch-input { background: #f6e3cf; }
-body[data-theme="creme"] input[type="checkbox"] { background: #fff7ec; }
+/* Creme checkbox: warm hairline + warm empty fill; checked = pink with light check.
+   These are theme-scoped so they outrank the generic `creme input` background. */
+body[data-theme="creme"] input[type="checkbox"] { background: #fff7ec; border-color: #e0caaf; }
+body[data-theme="creme"] input[type="checkbox"]:hover { border-color: var(--accent); }
+body[data-theme="creme"] input[type="checkbox"]:checked { border-color: var(--accent); background: var(--accent); }
+body[data-theme="creme"] input[type="checkbox"]:checked::after { border-color: #fff7ec; }
 body[data-theme="creme"] .tts-text textarea { background: #f6e3cf; }
 body[data-theme="creme"] .inst-input input { background: #f6e3cf; }
 body[data-theme="creme"] .me-fields input { background: #f6e3cf; }
