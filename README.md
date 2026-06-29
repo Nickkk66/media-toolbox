@@ -37,6 +37,13 @@ uploaded, and there's no 1 GB cap.
 - **Usage limits** — pick Low / Recommended / Full / Custom so big jobs never max out your PC.
 - **Self-contained** — recipients install nothing.
 
+## Private by design
+
+There is no server. Your media is read, processed and written right where it
+lives, and the on-device AI models run locally. Cut the network entirely and
+every on-device tool keeps working. No ads, no trackers, no account, no
+subscription.
+
 ## Screenshots
 
 <p align="center">
