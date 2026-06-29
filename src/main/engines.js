@@ -1,0 +1,165 @@
+'use strict';
+
+// On-demand engine binaries.
+//
+// To keep the installer tiny (~15 MB) we DON'T bundle the heavy native engines
+// (ffmpeg, yt-dlp, Ghostscript, Real-ESRGAN, …). Instead each one is published
+// as a zip on the GitHub "engines-v1" release and downloaded the first time a
+// tool that needs it is used, then cached under <userData>/engines/<subdir>/.
+//
+// ffmpegPath.js looks in that cache first, so once an engine is unpacked the
+// rest of the app finds it exactly as if it had been bundled. In dev the
+// binaries already live in vendor/, so isInstalled() is true and nothing is
+// downloaded.
+
+const https = require('https');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { spawn } = require('child_process');
+
+let app = null;
+try { app = require('electron').app; } catch { app = null; }
+
+// Bump the tag (and re-upload assets) when an engine binary needs updating.
+const BASE_URL = 'https://github.com/pipelinear/media-toolbox/releases/download/engines-v1/';
+
+// key -> bundle metadata. `subdir` matches the folders ffmpegPath resolves.
+// `verify` is the set of files that must exist for the engine to count as
+// installed. `bytes` is an approximate download size for the progress UI.
+const ENGINES = {
+  ffmpeg:      { subdir: 'bin',        asset: 'ffmpeg-win-x64.zip',      verify: ['ffmpeg.exe', 'ffprobe.exe'], label: 'media engine (FFmpeg)',     bytes: 63 * 1024 * 1024 },
+  ytdlp:       { subdir: 'bin',        asset: 'ytdlp-win-x64.zip',       verify: ['yt-dlp.exe'],                label: 'downloader (yt-dlp)',       bytes: 18 * 1024 * 1024 },
+  sevenzip:    { subdir: 'bin',        asset: 'sevenzip-win-x64.zip',    verify: ['7za.exe'],                   label: 'archiver (7-Zip)',          bytes: 1 * 1024 * 1024 },
+  ghostscript: { subdir: 'gs',         asset: 'ghostscript-win-x64.zip', verify: ['gswin64c.exe', 'gsdll64.dll'], label: 'PDF engine (Ghostscript)', bytes: 13 * 1024 * 1024 },
+  qpdf:        { subdir: 'qpdf',       asset: 'qpdf-win-x64.zip',        verify: ['qpdf.exe'],                  label: 'PDF tool (qpdf)',           bytes: 4 * 1024 * 1024 },
+  exiftool:    { subdir: 'exiftool',   asset: 'exiftool-win-x64.zip',    verify: ['exiftool.exe'],              label: 'metadata (ExifTool)',       bytes: 11 * 1024 * 1024 },
+  realesrgan:  { subdir: 'realesrgan', asset: 'realesrgan-win-x64.zip',  verify: ['realesrgan-ncnn-vulkan.exe'], label: 'upscaler (Real-ESRGAN)',   bytes: 43 * 1024 * 1024 },
+  whisper:     { subdir: 'whisper',    asset: 'whisper-win-x64.zip',     verify: ['whisper-cli.exe'],           label: 'transcriber (Whisper)',     bytes: 16 * 1024 * 1024 },
+  piper:       { subdir: 'piper',      asset: 'piper-win-x64.zip',       verify: ['piper.exe'],                 label: 'text-to-speech (Piper)',    bytes: 22 * 1024 * 1024 },
+};
+
+function cacheRoot() {
+  if (app && typeof app.getPath === 'function') {
+    try { return path.join(app.getPath('userData'), 'engines'); } catch { /* */ }
+  }
+  return path.join(os.tmpdir(), 'mtb-engines');
+}
+
+function engineDir(key) { return path.join(cacheRoot(), ENGINES[key].subdir); }
+
+// Places an engine might already live without a download: the cache, the
+// packaged resources folder, or the dev vendor/ tree.
+function searchDirs(subdir) {
+  const list = [path.join(cacheRoot(), subdir)];
+  if (process.resourcesPath) list.push(path.join(process.resourcesPath, subdir));
+  list.push(path.resolve(__dirname, '..', '..', 'vendor', subdir)); // src/main -> projectRoot/vendor
+  if (app && typeof app.getAppPath === 'function') {
+    try { list.push(path.join(app.getAppPath(), 'vendor', subdir)); } catch { /* */ }
+  }
+  return list;
+}
+
+function presentIn(dir, verify) {
+  try { return verify.every((f) => fs.existsSync(path.join(dir, f))); } catch { return false; }
+}
+
+// True if every required file for the engine exists in some known location.
+function isInstalled(key) {
+  const e = ENGINES[key];
+  if (!e) return false;
+  return searchDirs(e.subdir).some((d) => presentIn(d, e.verify));
+}
+
+// True if the engine is installed OR can be fetched on this platform — used so
+// the UI keeps a tool enabled and triggers the download on first use.
+function isAvailable(key) {
+  return isInstalled(key) || (process.platform === 'win32' && !!ENGINES[key]);
+}
+
+// Stream a URL to disk, following GitHub's redirect to the asset CDN, reporting
+// fractional progress when a content-length is known.
+function downloadTo(url, dest, onFrac, redirects = 6) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'media-toolbox' } }, (res) => {
+      const code = res.statusCode || 0;
+      if (code >= 300 && code < 400 && res.headers.location && redirects > 0) {
+        res.resume();
+        resolve(downloadTo(new URL(res.headers.location, url).toString(), dest, onFrac, redirects - 1));
+        return;
+      }
+      if (code !== 200) { res.resume(); reject(new Error(`HTTP ${code} while downloading the engine.`)); return; }
+      const total = parseInt(res.headers['content-length'] || '0', 10) || 0;
+      let received = 0;
+      const out = fs.createWriteStream(dest);
+      res.on('data', (c) => { received += c.length; if (onFrac && total) onFrac(received / total); });
+      res.on('error', reject);
+      out.on('error', reject);
+      out.on('finish', () => out.close(() => resolve()));
+      res.pipe(out);
+    });
+    req.on('error', reject);
+    req.setTimeout(120000, () => req.destroy(new Error('Engine download timed out.')));
+  });
+}
+
+// Unpack a zip with Windows' built-in Expand-Archive (no extra dependency).
+function unzip(zipPath, destDir) {
+  return new Promise((resolve, reject) => {
+    try { fs.mkdirSync(destDir, { recursive: true }); } catch { /* */ }
+    const cmd = `Expand-Archive -LiteralPath ${JSON.stringify(zipPath)} -DestinationPath ${JSON.stringify(destDir)} -Force`;
+    const ps = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', cmd], { windowsHide: true });
+    let err = '';
+    ps.stderr.on('data', (d) => { err += d.toString(); });
+    ps.on('error', reject);
+    ps.on('close', (code) => {
+      if (code === 0) return resolve();
+      reject(new Error('Could not unpack the engine: ' + (err.split('\n').filter(Boolean).pop() || `exit ${code}`)));
+    });
+  });
+}
+
+const _pending = new Map(); // key -> in-flight ensure() promise (dedupes parallel calls)
+
+// Make sure an engine is available, downloading+unpacking it if needed.
+// onProgress receives { key, label, phase:'download'|'extract'|'done', percent }.
+// Returns the directory the engine lives in.
+function ensure(key, onProgress) {
+  const e = ENGINES[key];
+  if (!e) return Promise.reject(new Error(`Unknown engine: ${key}`));
+  if (isInstalled(key)) return Promise.resolve(engineDir(key));
+  if (process.platform !== 'win32') return Promise.reject(new Error(`${e.label} isn't available on this platform.`));
+  if (_pending.has(key)) return _pending.get(key);
+
+  const task = (async () => {
+    const dir = engineDir(key);
+    try { fs.mkdirSync(cacheRoot(), { recursive: true }); } catch { /* */ }
+    const tmpZip = path.join(cacheRoot(), `${key}.download.zip`);
+    try { fs.unlinkSync(tmpZip); } catch { /* */ }
+
+    const report = (phase, percent) => { try { onProgress && onProgress({ key, label: e.label, phase, percent }); } catch { /* */ } };
+    report('download', 0);
+    try {
+      await downloadTo(BASE_URL + e.asset, tmpZip, (frac) => report('download', Math.round(frac * 100)));
+      report('extract', 100);
+      await unzip(tmpZip, dir);
+      if (!presentIn(dir, e.verify)) throw new Error(`${e.label} unpacked but is missing files; please try again.`);
+      report('done', 100);
+      return dir;
+    } finally {
+      try { fs.unlinkSync(tmpZip); } catch { /* */ }
+    }
+  })();
+
+  _pending.set(key, task);
+  return task.finally(() => _pending.delete(key));
+}
+
+// Ensure several engines in turn (e.g. ffmpeg + yt-dlp for a download).
+async function ensureAll(keys, onProgress) {
+  for (const k of keys) {
+    if (!isInstalled(k)) await ensure(k, onProgress);
+  }
+}
+
+module.exports = { ENGINES, ensure, ensureAll, isInstalled, isAvailable, cacheRoot, engineDir };

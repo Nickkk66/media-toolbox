@@ -5451,6 +5451,57 @@ function dropSplash() {
   setTimeout(() => box.classList.remove('splash'), 600);
 }
 
+// One-time engine download overlay. Heavy native engines (ffmpeg, yt-dlp, …)
+// aren't bundled — they download on first use. This shows a small modal while
+// that happens, and refreshes capabilities once a new engine lands.
+function wireEngineOverlay() {
+  if (!window.api.onEngineProgress) return;
+  const ov = document.createElement('div');
+  ov.id = 'engineOverlay';
+  ov.className = 'engine-overlay hidden';
+  ov.innerHTML =
+    '<div class="engine-card">' +
+    '<div class="engine-spinner"></div>' +
+    '<div class="engine-title" id="engineTitle">Getting things ready…</div>' +
+    '<div class="engine-sub" id="engineSub">One-time download — future use is instant</div>' +
+    '<div class="engine-bar"><div class="engine-bar-fill" id="engineBarFill"></div></div>' +
+    '<div class="engine-pct" id="enginePct"></div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  const title = ov.querySelector('#engineTitle');
+  const sub = ov.querySelector('#engineSub');
+  const fill = ov.querySelector('#engineBarFill');
+  const pct = ov.querySelector('#enginePct');
+  let hideTimer = null;
+
+  window.api.onEngineProgress((d) => {
+    if (!d || d.phase === 'idle') { ov.classList.add('hidden'); return; }
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    ov.classList.remove('hidden');
+    const label = d.label || 'a component';
+    if (d.phase === 'extract') {
+      title.textContent = 'Unpacking ' + label;
+      sub.textContent = 'Almost there…';
+      fill.style.width = '100%'; pct.textContent = '';
+    } else if (d.phase === 'done') {
+      title.textContent = 'Ready';
+      fill.style.width = '100%'; pct.textContent = '100%';
+      hideTimer = setTimeout(() => ov.classList.add('hidden'), 500);
+    } else {
+      const p = Math.max(0, Math.min(100, Math.round(d.percent || 0)));
+      title.textContent = 'Getting ' + label;
+      sub.textContent = 'One-time download — future use is instant';
+      fill.style.width = p + '%'; pct.textContent = p + '%';
+    }
+  });
+
+  if (window.api.onEngineChanged) {
+    window.api.onEngineChanged(async () => {
+      try { state.caps = await window.api.capabilities(); } catch { /* */ }
+    });
+  }
+}
+
 // ---------- init ----------
 async function pick() { if (!state.ws) return; const paths = await window.api.pickFiles(); if (paths.length) addPaths(paths); }
 async function init() {
@@ -5500,6 +5551,7 @@ async function init() {
   if (window.api.aimodels && window.api.aimodels.onAimodelChanged) {
     window.api.aimodels.onAimodelChanged(() => refreshAiModelState());
   }
+  wireEngineOverlay();
   wireFirstRun();
   $('instCancel').addEventListener('click', () => $('instanceModal').classList.add('hidden'));
   $('instOpen').addEventListener('click', () => { window.api.newWindow(); $('instanceModal').classList.add('hidden'); });

@@ -26,6 +26,12 @@ function candidates(name, subdir) {
   const bin = `${name}${EXE}`;
   const list = [];
 
+  // 0. On-demand cache: <userData>/engines/<subdir>/<bin> (downloaded at runtime
+  //    by engines.js). Checked FIRST so a fetched engine always wins.
+  if (electronApp && typeof electronApp.getPath === 'function') {
+    try { list.push(path.join(electronApp.getPath('userData'), 'engines', subdir, bin)); } catch { /* */ }
+  }
+
   // 1. Packaged: resources/<subdir>/<bin>
   if (process.resourcesPath) {
     list.push(path.join(process.resourcesPath, subdir, bin));
@@ -56,64 +62,34 @@ function resolve(name, subdir) {
   return `${name}${EXE}`;
 }
 
-// Cache so we only hit the filesystem once.
-let _ffmpeg = null;
-let _ffprobe = null;
-let _gs = null;
-let _ytdlp = null;
-let _sevenzip = null;
-let _qpdf = null;
-let _exiftool = null;
-let _realesrgan = null;
-let _whisper = null;
-let _piper = null;
+// Resolve + cache. We only cache a REAL absolute hit — if the engine isn't
+// present yet (on-demand download still pending) we keep re-resolving so the
+// freshly unpacked binary is picked up on the next access instead of being
+// stuck on the bare-name PATH fallback.
+const _cache = {};
+function locate(slot, name, subdir) {
+  const cur = _cache[slot];
+  if (cur && path.isAbsolute(cur) && fs.existsSync(cur)) return cur;
+  const r = resolve(name, subdir);
+  if (path.isAbsolute(r) && fs.existsSync(r)) _cache[slot] = r;
+  return r;
+}
 
 module.exports = {
-  get ffmpeg() {
-    if (_ffmpeg === null) _ffmpeg = resolve('ffmpeg', 'bin');
-    return _ffmpeg;
-  },
-  get ffprobe() {
-    if (_ffprobe === null) _ffprobe = resolve('ffprobe', 'bin');
-    return _ffprobe;
-  },
-  get ghostscript() {
-    if (_gs === null) _gs = resolve('gswin64c', 'gs');
-    return _gs;
-  },
-  get ytdlp() {
-    if (_ytdlp === null) _ytdlp = resolve('yt-dlp', 'bin');
-    return _ytdlp;
-  },
-  get sevenzip() {
-    if (_sevenzip === null) _sevenzip = resolve('7za', 'bin');
-    return _sevenzip;
-  },
-  get qpdf() {
-    if (_qpdf === null) _qpdf = resolve('qpdf', 'qpdf');
-    return _qpdf;
-  },
-  get exiftool() {
-    // exiftool.exe needs its 'exiftool_files/' folder sitting beside it; both
-    // are packaged into resources/exiftool (see electron-builder.yml).
-    if (_exiftool === null) _exiftool = resolve('exiftool', 'exiftool');
-    return _exiftool;
-  },
-  get realesrgan() {
-    // realesrgan-ncnn-vulkan.exe + vcomp140.dll + a models/ folder beside it.
-    if (_realesrgan === null) _realesrgan = resolve('realesrgan-ncnn-vulkan', 'realesrgan');
-    return _realesrgan;
-  },
-  get whisper() {
-    // whisper-cli.exe (whisper.cpp) + its ggml/openblas DLLs beside it.
-    if (_whisper === null) _whisper = resolve('whisper-cli', 'whisper');
-    return _whisper;
-  },
-  get piper() {
-    // piper.exe (Piper TTS) + its DLLs + espeak-ng-data/ beside it; voices downloaded.
-    if (_piper === null) _piper = resolve('piper', 'piper');
-    return _piper;
-  },
+  get ffmpeg() { return locate('ffmpeg', 'ffmpeg', 'bin'); },
+  get ffprobe() { return locate('ffprobe', 'ffprobe', 'bin'); },
+  get ghostscript() { return locate('gs', 'gswin64c', 'gs'); },
+  get ytdlp() { return locate('ytdlp', 'yt-dlp', 'bin'); },
+  get sevenzip() { return locate('sevenzip', '7za', 'bin'); },
+  get qpdf() { return locate('qpdf', 'qpdf', 'qpdf'); },
+  // exiftool.exe needs its 'exiftool_files/' folder sitting beside it.
+  get exiftool() { return locate('exiftool', 'exiftool', 'exiftool'); },
+  // realesrgan-ncnn-vulkan.exe + vcomp140.dll + a models/ folder beside it.
+  get realesrgan() { return locate('realesrgan', 'realesrgan-ncnn-vulkan', 'realesrgan'); },
+  // whisper-cli.exe (whisper.cpp) + its ggml/openblas DLLs beside it.
+  get whisper() { return locate('whisper', 'whisper-cli', 'whisper'); },
+  // piper.exe (Piper TTS) + its DLLs + espeak-ng-data/ beside it; voices downloaded.
+  get piper() { return locate('piper', 'piper', 'piper'); },
   // True only when a real bundled/vendored binary was found (not a PATH fallback).
   isBundled() {
     return path.isAbsolute(this.ffmpeg) && fs.existsSync(this.ffmpeg);

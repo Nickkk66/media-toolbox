@@ -67,6 +67,11 @@ contextBridge.exposeInMainWorld('api', {
   onFirstRunStart: (cb) => ipcRenderer.on('firstrun:start', (_e, d) => cb(d)),
   onFirstRunDone: (cb) => ipcRenderer.on('firstrun:done', (_e, d) => cb(d)),
 
+  // On-demand engines: a tool downloads its native engine on first use. The
+  // renderer shows a one-time overlay from these events.
+  onEngineProgress: (cb) => ipcRenderer.on('engine:progress', (_e, d) => cb(d)),
+  onEngineChanged: (cb) => ipcRenderer.on('engine:changed', (_e, d) => cb(d)),
+
   // Local AI tools (whisper transcription / Real-ESRGAN upscale / bg removal)
   aiTranscribe: (opts) => ipcRenderer.invoke('ai:transcribe', opts),
   aiUpscale: (opts) => ipcRenderer.invoke('ai:upscale', opts),

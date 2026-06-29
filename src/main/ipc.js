@@ -11,8 +11,17 @@ const pdfedit = require('./media/pdfedit');
 const youtube = require('./youtube');
 const spotify = require('./spotify');
 const aiModels = require('./aiModels');
+const engines = require('./engines');
 const settings = require('./settings');
 const { Queue } = require('./queue');
+
+// Which on-demand engine(s) a media job/probe of a given type needs.
+function enginesForType(type) {
+  if (type === 'archive') return ['sevenzip'];
+  if (type === 'pdf' || type === 'pdf2img') return ['ghostscript'];
+  if (type === 'pdfop') return ['ghostscript', 'qpdf'];
+  return ['ffmpeg']; // audio/video/image/gif/blur/thumbgrab/img2pdf/...
+}
 
 // Pick a non-clobbering output path. Compress jobs get a "_compressed" suffix;
 // convert jobs keep the base name (just a new extension).
@@ -73,6 +82,26 @@ function registerIpc(getWindow) {
     BrowserWindow.getAllWindows().forEach((w) => { if (!w.isDestroyed()) w.webContents.send(channel, payload); });
   };
 
+  // Download any engines a tool needs (first use only), streaming progress to
+  // the renderer so it can show a one-time "Getting <engine>…" overlay. Throws
+  // if a download fails so the caller surfaces the error instead of running a
+  // missing binary.
+  const ensureEngine = async (keys) => {
+    const list = Array.isArray(keys) ? keys : [keys];
+    const missing = list.filter((k) => !engines.isInstalled(k));
+    if (!missing.length) return;
+    try {
+      for (const k of missing) {
+        await engines.ensure(k, (p) => send('engine:progress', p));
+      }
+    } finally {
+      send('engine:progress', { phase: 'idle' });
+    }
+    // New engine present → let windows refresh capabilities (e.g. GPU encoders).
+    try { require('./ffmpeg/encoders').reset(); } catch { /* */ }
+    send('engine:changed', { keys: missing });
+  };
+
   const queue = new Queue({
     onProgress: (p) => send('job:progress', p),
     onDone: (p) => send('job:done', p),
@@ -83,14 +112,16 @@ function registerIpc(getWindow) {
   ipcMain.handle('app:capabilities', async () => ({
     encoders: await encoders.detect(),
     media: media.describe(),
-    hasGhostscript: ffmpegPath.hasGhostscript(),
-    hasYtdlp: ffmpegPath.hasYtdlp(),
-    hasSevenzip: ffmpegPath.hasSevenzip(),
-    hasQpdf: ffmpegPath.hasQpdf(),
-    hasExiftool: ffmpegPath.hasExiftool(),
-    hasWhisper: ffmpegPath.hasWhisper(),
-    hasPiper: ffmpegPath.hasPiper(),
-    hasRealesrgan: ffmpegPath.hasRealesrgan(),
+    // On-demand engines: report "available" when installed OR fetchable, so the
+    // tool stays enabled and the engine downloads on first use.
+    hasGhostscript: engines.isAvailable('ghostscript'),
+    hasYtdlp: engines.isAvailable('ytdlp'),
+    hasSevenzip: engines.isAvailable('sevenzip'),
+    hasQpdf: engines.isAvailable('qpdf'),
+    hasExiftool: engines.isAvailable('exiftool'),
+    hasWhisper: engines.isAvailable('whisper'),
+    hasPiper: engines.isAvailable('piper'),
+    hasRealesrgan: engines.isAvailable('realesrgan'),
     // Background removal needs the native ORT runtime; degrade gracefully if it
     // fails to load (the tool then shows "AI runtime unavailable").
     hasBgRemoval: (() => { try { require('onnxruntime-node'); return true; } catch { return false; } })(),
@@ -113,8 +144,9 @@ function registerIpc(getWindow) {
 
   // ---- YouTube / yt-dlp ----
   let ytController = null;
-  ipcMain.handle('yt:info', (_e, url) => youtube.info(url));
+  ipcMain.handle('yt:info', async (_e, url) => { await ensureEngine('ytdlp'); return youtube.info(url); });
   ipcMain.handle('yt:download', async (_e, opts) => {
+    await ensureEngine(['ffmpeg', 'ytdlp']);
     // Resolve the output dir the same way conversions do (resolveOutputDir):
     // honor a per-session folder, else the saved default download location,
     // else the real Downloads folder (falling back to homedir if unavailable).
@@ -142,6 +174,7 @@ function registerIpc(getWindow) {
   let spotController = null;
   ipcMain.handle('spotify:info', (_e, url) => spotify.info(url));
   ipcMain.handle('spotify:download', async (_e, opts) => {
+    await ensureEngine(['ffmpeg', 'ytdlp']);
     // Resolve the output dir the same way the downloader does.
     let outputDir = opts.outputDir;
     if (!outputDir) {
@@ -164,6 +197,9 @@ function registerIpc(getWindow) {
 
   // ---- About audio player: list songs in src/songs with embedded metadata ----
   ipcMain.handle('songs:list', async () => {
+    // The About player reads embedded tags via ffprobe. Don't trigger a 60 MB
+    // ffmpeg download just for the About page — only enrich if it's already here.
+    if (!engines.isInstalled('ffmpeg')) return [];
     const { execFile } = require('child_process');
     const os = require('os');
 
@@ -255,6 +291,7 @@ function registerIpc(getWindow) {
     const type = mediaType || media.typeForPath(inputPath);
     const mod = media.getByType(type);
     if (!mod) throw new Error('Unsupported file type.');
+    await ensureEngine(enginesForType(type)); // fetch the engine before probing
     const meta = await mod.probe(inputPath);
     meta.type = type;
     return meta;
@@ -291,9 +328,12 @@ function registerIpc(getWindow) {
 
   ipcMain.handle('job:start', async (_e, spec) => {
     // spec: { jobId, mediaType, inputPath, settings, meta, outputDir }
-    const detected = await encoders.detect();
     const mod = media.getByType(spec.mediaType);
     if (!mod) throw new Error('Unsupported media type.');
+    // Fetch the engine this job needs BEFORE detecting encoders, so encoder
+    // detection runs against the real ffmpeg (not the CPU-only placeholder).
+    await ensureEngine(enginesForType(spec.mediaType));
+    const detected = await encoders.detect();
     // Apply the usage limit (ffmpeg thread cap) from settings.
     spec.settings = { ...spec.settings, threads: settings.load().threads || 0 };
 
@@ -317,8 +357,8 @@ function registerIpc(getWindow) {
 
   // PDF merge: combine several PDFs into one (multi-input, single output).
   ipcMain.handle('pdf:merge', async (_e, { inputs, outputDir }) => {
-    if (!ffmpegPath.hasGhostscript()) throw new Error('PDF merge requires Ghostscript.');
     if (!inputs || inputs.length < 2) throw new Error('Add at least two PDFs to merge.');
+    await ensureEngine('ghostscript');
     const dir = outputDir || path.dirname(inputs[0]);
     const out = uniqueOutput(dir, 'merged', 'pdf', true);
     const args = ['-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4', '-dNOPAUSE', '-dBATCH', '-dQUIET', '-o', out, ...inputs];
@@ -335,12 +375,14 @@ function registerIpc(getWindow) {
   // ---- Visual PDF tools (Crop PDF / Organize PDF) ----
   // Render every page to a small preview PNG + read page sizes (points).
   ipcMain.handle('pdf:thumbs', async (_e, { inputPath }) => {
+    await ensureEngine(['ghostscript', 'qpdf']);
     return pdfedit.thumbs(inputPath);
   });
 
   // Set the CropBox on all pages (coordinates in PDF points, origin bottom-left).
   ipcMain.handle('pdf:crop', async (_e, { inputPath, cropPt, outputDir }) => {
     if (!inputPath) throw new Error('No input PDF.');
+    await ensureEngine(['ghostscript', 'qpdf']);
     const parsed = path.parse(inputPath);
     const dir = resolveOutputDir({ outputDir }, parsed.dir);
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
@@ -352,6 +394,7 @@ function registerIpc(getWindow) {
   // the new order; `rotations` maps output position (1-based) -> degrees.
   ipcMain.handle('pdf:organize', async (_e, { inputPath, order, rotations, outputDir }) => {
     if (!inputPath) throw new Error('No input PDF.');
+    await ensureEngine(['ghostscript', 'qpdf']);
     const parsed = path.parse(inputPath);
     const dir = resolveOutputDir({ outputDir }, parsed.dir);
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
@@ -398,6 +441,7 @@ function registerIpc(getWindow) {
 
   ipcMain.handle('fps:render', async (_e, { inputPath, fps, interpolate }) => {
     if (!inputPath) throw new Error('No input file.');
+    await ensureEngine('ffmpeg');
     const target = Math.min(240, Math.max(1, Number(fps) || 30));
     const dir = fpsTempDir();
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
@@ -556,11 +600,13 @@ function registerIpc(getWindow) {
     });
   }
 
-  ipcMain.handle('meta:read', (_e, inputPath) => {
+  ipcMain.handle('meta:read', async (_e, inputPath) => {
     const ext = (path.extname(inputPath || '').replace('.', '') || '').toLowerCase();
-    if (IMAGE_META_EXTS.includes(ext) && ffmpegPath.hasExiftool()) {
-      return readImageMeta(inputPath);
+    if (IMAGE_META_EXTS.includes(ext)) {
+      await ensureEngine('exiftool');
+      if (ffmpegPath.hasExiftool()) return readImageMeta(inputPath);
     }
+    await ensureEngine('ffmpeg');
     return readAvMeta(inputPath);
   });
 
@@ -632,10 +678,12 @@ function registerIpc(getWindow) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* */ }
     const ext = (parsed.ext.replace('.', '') || 'mp4').toLowerCase();
     const isImage = IMAGE_EXTS.includes(ext);
-    // Images go through exiftool when available (rich EXIF/IPTC/XMP/ICC editing).
-    if ((kind === 'image' || isImage) && ffmpegPath.hasExiftool()) {
-      return writeImageMeta({ inputPath, tags, scrub, clearGps, dir });
+    // Images go through exiftool (rich EXIF/IPTC/XMP/ICC editing); others ffmpeg.
+    if (kind === 'image' || isImage) {
+      await ensureEngine('exiftool');
+      if (ffmpegPath.hasExiftool()) return writeImageMeta({ inputPath, tags, scrub, clearGps, dir });
     }
+    await ensureEngine('ffmpeg');
     const out = uniqueOutput(dir, parsed.name, ext, true);
     // Images: -map 0 + -c copy isn't meaningful; encode the single still and let
     // -map_metadata -1 strip everything when scrubbing GPS/creation/metadata.
@@ -699,10 +747,8 @@ function registerIpc(getWindow) {
   // 1) ffmpeg decodes the input to a 16kHz mono PCM wav in a temp dir.
   // 2) whisper-cli.exe transcribes it, writing srt/txt/vtt itself via -of.
   ipcMain.handle('ai:transcribe', async (_e, { inputPath, modelId, lang, formats, outputDir }) => {
-    if (!ffmpegPath.hasWhisper()) {
-      throw new Error('Transcription engine (whisper) is not available in this build.');
-    }
     if (!inputPath || !fs.existsSync(inputPath)) throw new Error('No input file.');
+    await ensureEngine(['ffmpeg', 'whisper']); // ffmpeg extracts the wav, whisper transcribes
     if (!modelId) throw new Error('No transcription model selected. Download one in Settings → Local AI.');
 
     // Resolve the model file via the shared aiModels module (required lazily so
@@ -871,10 +917,8 @@ function registerIpc(getWindow) {
 
   // ---- Local AI: Image Upscaler (Real-ESRGAN ncnn-vulkan) ----
   ipcMain.handle('ai:upscale', async (_e, { inputPath, model, scale, outputDir }) => {
-    if (!ffmpegPath.hasRealesrgan()) {
-      throw new Error('Upscaler engine (Real-ESRGAN) is not available in this build.');
-    }
     if (!inputPath || !fs.existsSync(inputPath)) throw new Error('No input image.');
+    await ensureEngine('realesrgan');
 
     const modelName = model || 'realesrgan-x4plus';
     // The x4plus models are x4-native; only animevideov3 supports 2/3/4.
@@ -936,9 +980,8 @@ function registerIpc(getWindow) {
   // its path. Nothing is written to the user's output folder until they hit
   // Download (ai:tts:save). The temp dir is wiped on quit (see main.js).
   ipcMain.handle('ai:tts', async (_e, { text, voiceId, format, lengthScale, speed }) => {
-    if (!ffmpegPath.hasPiper()) {
-      throw new Error('Text-to-speech engine (Piper) is not available in this build.');
-    }
+    // piper synthesizes; ffmpeg is only needed when encoding to mp3.
+    await ensureEngine((format === 'mp3') ? ['piper', 'ffmpeg'] : 'piper');
     const say = String(text == null ? '' : text).trim();
     if (!say) throw new Error('Enter some text to speak.');
     if (!voiceId) throw new Error('No voice selected. Download one in Settings → Local AI.');

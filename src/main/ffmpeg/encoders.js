@@ -5,6 +5,7 @@
 
 const { execFile } = require('child_process');
 const ffmpegPath = require('./ffmpegPath');
+const engines = require('../engines');
 
 const ENCODER_NAMES = {
   h264: { cpu: 'libx264', nvenc: 'h264_nvenc', amf: 'h264_amf', qsv: 'h264_qsv' },
@@ -13,8 +14,26 @@ const ENCODER_NAMES = {
 
 let _cache = null;
 
+// A conservative software-only result used before ffmpeg has been downloaded
+// (on-demand). NOT cached, so a real detection runs once ffmpeg is present.
+function softwareDefault() {
+  const result = { h264: {}, hevc: {} };
+  for (const codec of Object.keys(ENCODER_NAMES)) {
+    for (const vendor of Object.keys(ENCODER_NAMES[codec])) {
+      result[codec][vendor] = vendor === 'cpu' ? ENCODER_NAMES[codec].cpu : null;
+    }
+  }
+  result.vendors = { cpu: true, nvenc: false, amf: false, qsv: false };
+  result.error = null;
+  result.pending = true; // ffmpeg not installed yet; GPU options unknown
+  return result;
+}
+
 function detect() {
   if (_cache) return Promise.resolve(_cache);
+  // ffmpeg isn't here yet — don't spawn a missing binary; report CPU-only for
+  // now. It downloads on first real use and detection re-runs after that.
+  if (!engines.isInstalled('ffmpeg')) return Promise.resolve(softwareDefault());
   return new Promise((resolve) => {
     execFile(
       ffmpegPath.ffmpeg,
@@ -56,4 +75,8 @@ function resolveEncoder(detected, codec, vendor) {
   return map[vendor] || map.cpu;
 }
 
-module.exports = { detect, resolveEncoder, ENCODER_NAMES };
+// Drop the cached detection so the next detect() re-probes (called after ffmpeg
+// is downloaded on demand, replacing the CPU-only default with real results).
+function reset() { _cache = null; }
+
+module.exports = { detect, resolveEncoder, reset, ENCODER_NAMES };

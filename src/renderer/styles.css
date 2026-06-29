@@ -1175,3 +1175,33 @@ body.is-offline #aiModels .ai-row:not([data-installed="1"]) [data-role="btn"] {
   opacity: 0.45;
   pointer-events: none;
 }
+
+/* ---- on-demand engine download overlay ---- */
+.engine-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(12, 12, 15, 0.55); backdrop-filter: blur(4px);
+}
+.engine-overlay.hidden { display: none; }
+.engine-card {
+  width: min(380px, 86vw); padding: 28px 26px; border-radius: 18px;
+  background: var(--canvas); color: var(--ink);
+  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--steel); text-align: center;
+}
+.engine-spinner {
+  width: 38px; height: 38px; margin: 0 auto 16px; border-radius: 50%;
+  border: 3px solid var(--steel); border-top-color: var(--accent);
+  animation: engineSpin 0.8s linear infinite;
+}
+@keyframes engineSpin { to { transform: rotate(360deg); } }
+.engine-title { font-weight: 600; font-size: 1.05rem; margin-bottom: 4px; }
+.engine-sub { color: var(--graphite); font-size: 0.85rem; margin-bottom: 16px; }
+.engine-bar {
+  height: 8px; border-radius: 999px; background: var(--steel); overflow: hidden;
+}
+.engine-bar-fill {
+  height: 100%; width: 0%; border-radius: 999px;
+  background: var(--accent); transition: width 0.2s ease;
+}
+.engine-pct { margin-top: 8px; font-size: 0.82rem; color: var(--graphite); font-variant-numeric: tabular-nums; }
