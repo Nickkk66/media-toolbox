@@ -1,5 +1,5 @@
-/* teenage-engineering style system — industrial catalogue under studio light.
-   Near-white canvas, hairline-thin type, zero radius, zero shadows, monochrome. */
+/* Industrial-catalogue style system — near-white canvas, hairline-thin type,
+   zero radius, zero shadows, monochrome. */
 :root {
   --canvas: #f6f8f7;
   --ink: #000000;

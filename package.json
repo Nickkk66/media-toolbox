@@ -1,12 +1,12 @@
 {
   "name": "media-toolbox",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Local media toolbox with no file-size limit. Engines download on demand; runs offline once set up.",
   "author": {
     "name": "pipelinear",
     "email": "pipelinear@users.noreply.github.com"
   },
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",

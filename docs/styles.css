@@ -1,7 +1,7 @@
 /* =======================================================================
    media toolbox — landing page
-   Alcove-inspired: warm cream canvas, fully rounded, soft shadows,
-   centered, playful hand-drawn accents.
+   Warm cream canvas, fully rounded, soft shadows, centered, playful
+   hand-drawn accents.
    Display: Bricolage Grotesque  ·  Body/UI: Figtree
    ======================================================================= */
 
@@ -68,7 +68,7 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
 .btn.light .pill{ background:var(--ink); color:var(--cream); }
 
 /* download button: leading Windows glyph morphs into an arrow while the
-   label slides left (Alcove-style). */
+   label slides left. */
 .dl,.src{ border-radius:14px; }
 .dl{ position:relative; padding-left:2.7em; padding-right:1.5em; overflow:hidden; }
 .dl.small{ padding-left:2.5em; padding-right:1.2em; }
@@ -176,7 +176,7 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
 .scribble-mark{ position:absolute; left:0; right:0; bottom:-.32em; width:100%; height:.4em; overflow:visible; }
 .scribble-mark path{ fill:none; stroke:var(--purple); stroke-width:5; stroke-linecap:round; }
 
-/* feature grid — big bold icons on cream, no cards (Alcove style) */
+/* feature grid — big bold icons on cream, no cards */
 .fgrid{ display:grid; grid-template-columns:repeat(4,1fr); gap:78px 40px; max-width:1160px; margin:0 auto; }
 .f{ text-align:center; display:flex; flex-direction:column; align-items:center; gap:1.3rem; }
 .fic{ display:inline-grid; place-items:center; color:var(--ink);
@@ -221,9 +221,26 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
    feature icon hover animations — each plays ONCE on hover, then rests
    (no constant looping); some hold their end state until the mouse leaves
    ==================================================================== */
-/* convert: both arrows slide DOWN and hold while hovered, then slide back up on leave */
-.f-convert .ar{ transform-box:fill-box; transform-origin:center; transition:transform .55s cubic-bezier(.22,1,.36,1); }
-.f-convert:hover .ar{ transform:translateY(7px); }
+/* convert: HOLD DOWN (pointerdown) to fire. The two arrows pull back & aim,
+   then launch in opposite arcs and fall off-screen. Driven by JS adding
+   .firing on pointerdown; it auto-resets on animationend so it can re-fire.
+   Continues even if the cursor leaves (it's an animation, not a hover state). */
+.f-convert{ cursor:pointer; }
+.f-convert .ar{ transform-box:fill-box; transform-origin:center; }
+.f-convert.firing .ar-t{ animation:shootTop 1.05s cubic-bezier(.34,.62,.3,1) forwards; }
+.f-convert.firing .ar-b{ animation:shootBot 1.05s cubic-bezier(.34,.62,.3,1) forwards; }
+@keyframes shootTop{
+  0%{   transform:translate(0,0) rotate(0); opacity:1; }
+  20%{  transform:translate(-9px,2px) rotate(-8deg); opacity:1; }   /* pull back & aim */
+  48%{  transform:translate(130px,-70px) rotate(26deg); opacity:1; } /* arc up */
+  100%{ transform:translate(360px,180px) rotate(82deg); opacity:0; } /* over the top, fall off */
+}
+@keyframes shootBot{
+  0%{   transform:translate(0,0) rotate(0); opacity:1; }
+  20%{  transform:translate(-9px,-2px) rotate(8deg); opacity:1; }    /* pull back & aim */
+  48%{  transform:translate(120px,60px) rotate(-22deg); opacity:1; } /* arc down */
+  100%{ transform:translate(350px,210px) rotate(-78deg); opacity:0; }/* sweep down, fall off */
+}
 
 /* compress: corners slide in a touch on hover, HOLD while hovered, undo on leave */
 .f-compress .cz{ transition:transform .5s cubic-bezier(.22,1,.36,1); }
@@ -236,18 +253,21 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
 .f-edit .fic svg{ transition:transform .4s cubic-bezier(.22,1,.36,1); transform-box:fill-box; transform-origin:50% 50%; }
 .f-edit:hover .fic svg{ transform:rotate(-11deg) scale(1.07); }
 
-/* download: the arrow presses onto the line and STAYS until the mouse leaves */
-.f-download .dl-base{ transform-box:fill-box; transform-origin:center; }
-.f-download:hover .dl-up{ animation:press .4s cubic-bezier(.34,1.25,.5,1) forwards; }
-.f-download:hover .dl-base{ animation:plink .45s ease 1; }
-@keyframes press{ to{ transform:translateY(5px) } }
-@keyframes plink{ 50%{ transform:scaleX(1.22) } }
+/* download: the arrow presses onto the line and the line below grows wider,
+   both HOLDING while hovered; on leave they smoothly undo (transition, so the
+   reverse is automatic — no snap). */
+.f-download .dl-up{ transform-box:fill-box; transform-origin:center;
+  transition:transform .4s cubic-bezier(.34,1.25,.5,1); }
+.f-download .dl-base{ transform-box:fill-box; transform-origin:center;
+  transition:transform .4s cubic-bezier(.22,1,.36,1); }
+.f-download:hover .dl-up{ transform:translateY(5px); }
+.f-download:hover .dl-base{ transform:scaleX(1.28); }
 
-/* remove backgrounds: the scissors close once and HOLD shut while hovered,
-   then open back up when the mouse leaves */
+/* remove backgrounds: the scissors CLOSE (blades come together) once and HOLD
+   shut while hovered, then open back up to idle when the mouse leaves */
 .f-cut .blade{ transform-box:fill-box; transform-origin:58% 52%; transition:transform .26s cubic-bezier(.5,0,.35,1); }
-.f-cut:hover .blade-a{ transform:rotate(16deg); }
-.f-cut:hover .blade-b{ transform:rotate(-16deg); }
+.f-cut:hover .blade-a{ transform:rotate(-16deg); }
+.f-cut:hover .blade-b{ transform:rotate(16deg); }
 
 /* transcribe: sound waves (angled toward the top-right of the mic) ripple out, then rest */
 .f-mic .w{ opacity:0; transform-box:fill-box; transform-origin:center; }
@@ -267,11 +287,14 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
 .f-bolt .fic{ transition:color .28s ease, transform .3s cubic-bezier(.22,1,.36,1); }
 .f-bolt:hover .fic{ color:#b49deb; }
 
-/* blazing fast: a purple circle draws itself around "native app" when the grid scrolls in */
+/* blazing fast: a purple loop draws itself around "native app". Its two ends
+   don't meet — they sit next to each other, one curling up and one down.
+   It draws ONCE, the first time the visitor scrolls down after a fresh load
+   (JS adds .draw). Subsequent scrolls don't redraw. */
 .circword{ position:relative; display:inline-block; isolation:isolate; }
 .ncircle{ position:absolute; left:-13%; top:-28%; width:126%; height:160%; overflow:visible; pointer-events:none; z-index:-1; }
 .ncircle path{ stroke-dasharray:1; stroke-dashoffset:1; transition:stroke-dashoffset 1.4s ease; }
-.fgrid.in .ncircle path{ stroke-dashoffset:0; }
+.ncircle.draw path{ stroke-dashoffset:0; }
 
 /* ====================================================================
    entrance animations — run once on page load (reload)

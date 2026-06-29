@@ -16,3 +16,8 @@ src/songs/
 # Promo video projects + the dropped songs (copyrighted audio; kept local only)
 videos/
 while im gone/
+
+# Private working docs + the old banner image — kept local, not published
+HANDOFF.md
+VIDEO-PLAN.md
+assets/banner.svg
