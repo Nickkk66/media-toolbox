@@ -23,6 +23,12 @@
 ; nsDialogs + LogicLib give us the dialog primitives and ${If}/${EndIf} etc.
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
+; CB_GETCURSEL (0x0147) lets us read the droplist selection. Define it only if
+; not already provided, so we never trigger a "!define redefinition" warning
+; (electron-builder builds NSIS with warnings-as-errors).
+!ifndef CB_GETCURSEL
+  !define CB_GETCURSEL 0x0147
+!endif
 
 ; --- Variables -------------------------------------------------------------
 ; Dialog handle + the two droplist (combobox) controls and their selections.
@@ -45,10 +51,9 @@ Var AiBgChoice          ; resolved bgremoval model id ('' | u2netp | u2net)
 ; AiModelsPageCreate — build the nsDialogs page.
 ; ---------------------------------------------------------------------------
 Function AiModelsPageCreate
-  ; Page header (title + subtitle in the wizard's top band).
-  !insertmacro MUI_HEADER_TEXT "Optional local-AI models" \
-    "Choose what to set up now — or skip and add them later."
-
+  ; NOTE: MUI_HEADER_TEXT is not available in electron-builder's NSIS context,
+  ; so the wizard's default top-band text is used. The labels below carry the
+  ; full explanation, so no custom header title is needed.
   nsDialogs::Create 1018
   Pop $AiDialog
   ${If} $AiDialog == error
@@ -95,7 +100,7 @@ FunctionEnd
 Function AiModelsPageLeave
   ; --- Map whisper selection (by index) to a model id ----------------------
   ; 0=None  1=Tiny  2=Base  3=Small
-  ${NSD_CB_GetSelectedIndex} $AiWhisperCombo $0
+  SendMessage $AiWhisperCombo ${CB_GETCURSEL} 0 0 $0
   StrCpy $AiWhisperChoice "" ; default empty (None)
   ${If} $0 == 1
     StrCpy $AiWhisperChoice "tiny"
@@ -107,7 +112,7 @@ Function AiModelsPageLeave
 
   ; --- Map background-removal selection (by index) to a model id -----------
   ; 0=None  1=Light(u2netp)  2=Standard(u2net)
-  ${NSD_CB_GetSelectedIndex} $AiBgCombo $1
+  SendMessage $AiBgCombo ${CB_GETCURSEL} 0 0 $1
   StrCpy $AiBgChoice "" ; default empty (None)
   ${If} $1 == 1
     StrCpy $AiBgChoice "u2netp"

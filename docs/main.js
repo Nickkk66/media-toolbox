@@ -17,3 +17,15 @@
 
   els.forEach(function (el) { io.observe(el); });
 })();
+
+// Top bar: a shadow appears only once the page is scrolled (it floats above
+// content). At the very top the bar is flush with the canvas.
+(function () {
+  var nav = document.querySelector('.nav');
+  if (!nav) return;
+  var onScroll = function () {
+    nav.classList.toggle('scrolled', window.scrollY > 4);
+  };
+  onScroll();
+  window.addEventListener('scroll', onScroll, { passive: true });
+})();

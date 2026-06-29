@@ -52,55 +52,49 @@ Grab the latest **installer** or **portable** build from the
 choose **More info -> Run anyway**.
 
 <details>
-<summary><b>More about media toolbox</b></summary>
+<summary><b>Development</b></summary>
 
-### Private by design
-
-There is no server. Your media is read, processed and written right where it
-lives, and the on-device AI models run locally. Cut the network entirely and
-every on-device tool keeps working. No ads, no trackers, no account, no
-subscription.
-
-### Full toolset
-
-- **Video** trim, crop, stretch (to TikTok / 16:9), speed, FPS changer, stabilizer, motion blur.
-- **Audio** trim, denoise.
-- **Image** GIF maker, resize / downscale, crop, rotate, flip, enlarger, upscaler, photo effects, privacy blur, watermark remover, color picker with screen eyedropper.
-- **PDF** merge, split, extract / remove pages, rotate, unlock, protect, flatten, to-image, crop, organize.
-- **Metadata** full EXIF / IPTC / XMP / ICC editor for images, plus audio / video metadata.
-- **Extras** batch rename, unit / time / archive converters.
-
-### On-device AI
-
-Models are downloaded once (in Settings, or during install) and then run fully
-offline: **background removal** (U2-Net), **image upscaling** (Real-ESRGAN),
-**transcription** (whisper.cpp, to SRT / VTT / TXT) and **text to speech**
-(Piper, 18 voices).
-
-### Hardware and limits
-
-- **Hardware accelerated** NVIDIA NVENC / Intel QSV / AMD AMF when available.
-- **Usage limits** pick Low / Recommended / Full / Custom so big jobs never max out your PC.
-- **Self-contained** recipients install nothing extra.
-- **Themes** creme (default), light and dark.
-
-### Tech
-
-Electron, vanilla JS renderer, FFmpeg, Ghostscript, qpdf, yt-dlp, 7-Zip,
-onnxruntime-node, Real-ESRGAN, whisper.cpp, Piper. Built with
-[`electron-builder`](https://www.electron.build).
-
-### Build from source
+Vanilla-JS Electron app. No bundler, no framework, no TypeScript.
 
 ```bash
-npm install
-npm start        # run in dev
-npm run dist     # build installer + portable to /build
+git clone https://github.com/pipelinear/media-toolbox
+cd media-toolbox
+npm install          # electron + electron-builder (+ onnxruntime-node)
+npm start            # run from source
+npm test             # bitrate unit tests
+npm run dist         # build NSIS installer + portable exe -> build/
 ```
 
-Vendor binaries (ffmpeg, ffprobe, yt-dlp, 7za in `vendor/bin`; ghostscript in
-`vendor/gs`; qpdf in `vendor/qpdf`; and the AI engines) are git-ignored due to
-size, drop them in before building.
+Build outputs: `build/Video Compressor Setup 1.0.0.exe` and
+`build/VideoCompressor-portable-1.0.0.exe`.
+
+### Layout
+
+```
+src/main         app lifecycle, ipc, serial job queue, settings
+src/main/media   per-type convert/compress/op modules (video/image/audio/pdf/gif)
+src/main/ffmpeg  ffmpeg arg builder, probe, encoders, binary path resolver
+src/renderer     index.html, styles.css, app.js, converters.js
+src/preload      contextBridge api
+vendor/          bundled binaries (git-ignored)
+assets/          icon.ico, installer.nsh, installer artwork, banner.svg
+```
+
+### Bundled binaries
+
+Git-ignored (size); expected on disk before `npm run dist`:
+`vendor/bin` ffmpeg, ffprobe, yt-dlp, 7za; `vendor/gs` ghostscript;
+`vendor/qpdf` qpdf; plus `vendor/exiftool`, `vendor/realesrgan`,
+`vendor/whisper`, `vendor/piper`. Resolved at runtime by
+`src/main/ffmpeg/ffmpegPath.js` (prod = `resources/`, dev = `vendor/`, else
+PATH). The one in-process native dep is `onnxruntime-node` (asarUnpacked).
+
+### Notes
+
+- Windows x64 target; NSIS installer is per-machine (requests admin / UAC).
+- Unsigned, so SmartScreen warns on first run (More info -> Run anyway).
+- AI model weights download on demand to `userData/models/`, not bundled.
+- First NSIS build can fail on the uninstaller stub (Defender); just re-run.
 
 </details>
 

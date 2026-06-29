@@ -78,6 +78,10 @@ win:
 
 nsis:
   oneClick: false
+  # The custom AI-models page function is only referenced in the installer, so
+  # the uninstaller compile pass emits a benign "function not referenced" (6010)
+  # warning. Do not treat NSIS warnings as fatal.
+  warningsAsErrors: false
   # perMachine + allowElevation => the installer requests admin (UAC) and installs
   # for all users. This is the "run as admin" setup the project wants.
   perMachine: true
