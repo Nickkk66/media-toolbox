@@ -337,25 +337,57 @@ function download(opts, onProgress) {
     // falls back to the best available result if none match. That keeps
     // it robust: we always get SOMETHING for any track. Note: the literal
     // word "audio" stays at the END of the query string.
-    const query = `ytsearch5:${meta.artist} ${meta.title} audio`;
+    // Search several candidates and bias toward the auto-generated
+    // "Artist - Topic" / "Official Audio" upload so we get clean studio audio
+    // instead of a music-video rip. IMPORTANT: yt-dlp's --match-filter is a HARD
+    // reject — a trailing "?" only marks a field optional-if-absent, it does NOT
+    // make the whole filter fall back. So if none of the results match (e.g. the
+    // only uploads are music videos), yt-dlp exits 0 having downloaded nothing.
+    // We therefore run it as a *preference*: try with the filter first, and if
+    // it matched nothing, retry the same search WITHOUT the filter so we always
+    // come back with audio for the track.
+    const query = `ytsearch5:${meta.artist} ${meta.title} audio`.trim();
     const matchFilter =
-      "uploader ~= '(?i)- Topic$' | title ~= '(?i)(official\\s*audio|lyrics?\\b|\\baudio\\b)' & title !~= '(?i)(official\\s*(music\\s*)?video|\\bm/?v\\b|\\blive\\b)' ?";
+      "uploader ~= '(?i)- Topic$' | title ~= '(?i)(official\\s*audio|lyrics?\\b|\\baudio\\b)' & title !~= '(?i)(official\\s*(music\\s*)?video|\\bm/?v\\b|\\blive\\b)'";
     const rawTmpl = path.join(tmpDir, 'dl.%(ext)s');
-    const args = [
+    const baseArgs = [
       '--no-playlist', '--no-warnings', '--newline',
       '--ffmpeg-location', ffmpegDir(),
+      // Recent yt-dlp deprecated YouTube extraction without a JavaScript runtime:
+      // most audio stream URLs need JS-based "nsig" descrambling or they 403 /
+      // come back "format not available", which surfaced here as a flaky code 1.
+      // End users won't have node/deno/bun installed, but Electron's own binary
+      // runs as Node when ELECTRON_RUN_AS_NODE=1 (set on the child env below), so
+      // we hand yt-dlp our own executable as the runtime — works in dev and in
+      // the packaged app with nothing extra to bundle.
+      '--js-runtimes', `node:${process.execPath}`,
       '-x', '--audio-format', 'mp3', '--audio-quality', '0',
-      '--match-filter', matchFilter,
+      // Grab only ONE track. ytsearch5 yields 5 entries; without this yt-dlp
+      // would download all five into the same dl.mp3, which races/overwrites and
+      // can crash the run (exit 1). With it, yt-dlp downloads the first (matching)
+      // result and stops — exiting 101 (MaxDownloadsReached), which we treat as
+      // success below because the file exists.
+      '--max-downloads', '1',
       '-o', rawTmpl,
       '--print', 'after_move:filepath',
-      query,
     ];
 
-    const dlPath = await new Promise((resolve, reject) => {
+    // Run yt-dlp once. Resolves with the downloaded path, or rejects. On a
+    // "nothing downloaded but yt-dlp succeeded" outcome the error carries
+    // .noMatch so the caller knows it's safe to retry without the filter.
+    const runYtdlp = (useFilter) => new Promise((resolve, reject) => {
       let finalPath = '';
       let buf = '';
       let stderrTail = '';
-      proc = spawn(ffmpegPath.ytdlp, args, { windowsHide: true });
+      const args = useFilter
+        ? [...baseArgs, '--match-filter', matchFilter, query]
+        : [...baseArgs, query];
+      // ELECTRON_RUN_AS_NODE makes the Electron binary we passed as --js-runtimes
+      // behave like a plain Node process when yt-dlp spawns it for nsig solving.
+      proc = spawn(ffmpegPath.ytdlp, args, {
+        windowsHide: true,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      });
 
       proc.stdout.on('data', (d) => {
         buf += d.toString();
@@ -384,9 +416,27 @@ function download(opts, onProgress) {
         }
         if (finalPath && fs.existsSync(finalPath)) return resolve(finalPath);
         if (/429|Too Many Requests/i.test(stderrTail)) return reject(new Error('YouTube rate-limited this request (HTTP 429). Wait a few minutes and try again.'));
-        return reject(new Error(`Couldn't find/download a matching track (code ${code}).`));
+        // yt-dlp ran but produced no file (most often the match-filter rejected
+        // every candidate). Flag it so we can retry without the filter. Surface
+        // the last stderr line so a genuine failure isn't an opaque code.
+        const lastErr = stderrTail.split('\n').map((s) => s.trim()).filter(Boolean).pop();
+        const detail = lastErr && /error/i.test(lastErr) ? ` — ${lastErr.replace(/^ERROR:\s*/i, '')}` : '';
+        const err = new Error(`Couldn't find/download a matching track (code ${code})${detail}.`);
+        err.noMatch = true;
+        return reject(err);
       });
     });
+
+    let dlPath;
+    try {
+      dlPath = await runYtdlp(true);
+    } catch (e) {
+      if (canceled || e.message === 'canceled' || !e.noMatch) throw e;
+      // The preference filter matched nothing — retry the same search without it
+      // so the user still gets the track (just possibly from a music-video rip).
+      onProgress && onProgress({ percent: 2, phase: 'download' });
+      dlPath = await runYtdlp(false);
+    }
     tmpFiles.push(dlPath);
     if (canceled) throw new Error('canceled');
 
