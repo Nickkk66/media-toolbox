@@ -3732,6 +3732,7 @@ const CHANGELOG_RECENT = [
 const CHANGELOG_PLANNED = [
   'More text-to-speech voices and languages',
   'Document conversion — Office and eBook formats',
+  { title: 'Beat analyzer', desc: 'Detect a track\'s BPM and beat grid, and build beat-synced edits.' },
   'Additional local AI tools',
 ];
 function changelogListHtml(arr) {

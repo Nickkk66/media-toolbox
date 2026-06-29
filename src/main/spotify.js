@@ -328,13 +328,24 @@ function download(opts, onProgress) {
     }
     if (canceled) throw new Error('canceled');
 
-    // Search query biases toward the official "Artist - Topic" auto audio.
-    const query = `ytsearch1:${meta.artist} ${meta.title} audio`;
+    // Pull several candidates and bias hard toward the auto-generated
+    // "Artist - Topic" / "Official Audio" upload so we get clean studio
+    // audio instead of a music-video rip. We search 5 results and use a
+    // SOFT match-filter (the trailing "?") so yt-dlp prefers a candidate
+    // whose uploader is an "- Topic" channel or whose title looks like
+    // official/lyric audio and is not an obvious music video, but still
+    // falls back to the best available result if none match. That keeps
+    // it robust: we always get SOMETHING for any track. Note: the literal
+    // word "audio" stays at the END of the query string.
+    const query = `ytsearch5:${meta.artist} ${meta.title} audio`;
+    const matchFilter =
+      "uploader ~= '(?i)- Topic$' | title ~= '(?i)(official\\s*audio|lyrics?\\b|\\baudio\\b)' & title !~= '(?i)(official\\s*(music\\s*)?video|\\bm/?v\\b|\\blive\\b)' ?";
     const rawTmpl = path.join(tmpDir, 'dl.%(ext)s');
     const args = [
       '--no-playlist', '--no-warnings', '--newline',
       '--ffmpeg-location', ffmpegDir(),
       '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+      '--match-filter', matchFilter,
       '-o', rawTmpl,
       '--print', 'after_move:filepath',
       query,
