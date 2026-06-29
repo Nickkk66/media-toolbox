@@ -30,6 +30,18 @@
   window.addEventListener('scroll', onScroll, { passive: true });
 })();
 
+// On phones/tablets the Windows .exe is useless, so point every "Download for
+// Windows" button at the GitHub releases page instead of the direct download.
+(function () {
+  var isMobile = /Android|iPhone|iPad|iPod|Mobile|Windows Phone|webOS|BlackBerry/i
+    .test(navigator.userAgent || '');
+  if (!isMobile) return;
+  var rel = 'https://github.com/pipelinear/media-toolbox/releases/latest';
+  document.querySelectorAll('a.dl').forEach(function (a) {
+    a.setAttribute('href', rel);
+  });
+})();
+
 // Hero video: click the poster (the logo) to play, like pressing a native
 // button. While it plays, sample the video's average colour every frame and
 // glow the area around it in that colour ("ambilight"), fading back to canvas.
