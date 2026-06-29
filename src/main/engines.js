@@ -22,7 +22,7 @@ let app = null;
 try { app = require('electron').app; } catch { app = null; }
 
 // Bump the tag (and re-upload assets) when an engine binary needs updating.
-const BASE_URL = 'https://github.com/pipelinear/media-toolbox/releases/download/engines-v1/';
+const BASE_URL = 'https://github.com/Nickkk66/media-toolbox/releases/download/engines-v1/';
 
 // Per-OS bits. On Windows binaries carry .exe; Ghostscript's CLI is gswin64c on
 // Windows but gs everywhere else. Mac/Linux binaries need the executable bit set

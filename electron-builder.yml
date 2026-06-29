@@ -1,6 +1,6 @@
-appId: com.pipelinear.mediatoolbox
+appId: com.nickkk66.mediatoolbox
 productName: Media Toolbox
-copyright: Copyright © 2026 pipelinear
+copyright: Copyright © 2026 Nickkk66
 
 directories:
   output: build
@@ -31,7 +31,7 @@ asarUnpack:
 # The web installer derives its package download URL from here.
 publish:
   provider: github
-  owner: pipelinear
+  owner: Nickkk66
   repo: media-toolbox
 
 # -------- Windows: tiny web installer + a self-contained portable --------

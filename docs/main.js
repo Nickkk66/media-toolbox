@@ -36,7 +36,7 @@
   var isMobile = /Android|iPhone|iPad|iPod|Mobile|Windows Phone|webOS|BlackBerry/i
     .test(navigator.userAgent || '');
   if (!isMobile) return;
-  var rel = 'https://github.com/pipelinear/media-toolbox/releases/latest';
+  var rel = 'https://github.com/Nickkk66/media-toolbox/releases/latest';
   document.querySelectorAll('a.dl').forEach(function (a) {
     a.setAttribute('href', rel);
   });
@@ -54,7 +54,7 @@
   else if (/mac|iphone|ipad|ipod/.test(s)) os = 'mac';
   else if (/linux|x11|ubuntu|fedora|debian/.test(s)) os = 'linux';
 
-  var REL = 'https://github.com/pipelinear/media-toolbox/releases/latest/download/';
+  var REL = 'https://github.com/Nickkk66/media-toolbox/releases/latest/download/';
   var MAP = {
     win:   { icon: '#i-win',   label: 'Download for Windows', file: 'media-toolbox-Setup.exe' },
     mac:   { icon: '#i-apple', label: 'Download for Mac',     file: 'media-toolbox-mac.dmg' },
@@ -187,7 +187,7 @@
   var rel = document.getElementById('rel');
   var menu = document.getElementById('relMenu');
   if (!rel || !menu) return;
-  var REPO = 'pipelinear/media-toolbox';
+  var REPO = 'Nickkk66/media-toolbox';
   var loaded = false;
 
   // one preferred installer per OS, in display order, if present in the release

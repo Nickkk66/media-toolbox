@@ -5053,8 +5053,8 @@ function wireRemoveBg() {
 }
 
 // ---------- Profile (GitHub live) ----------
-const GH_USER = 'pipelinear';
-const GH_REPO = 'pipelinear/media-toolbox';
+const GH_USER = 'Nickkk66';
+const GH_REPO = 'Nickkk66/media-toolbox';
 const STAR_GOALS = [5, 10, 15, 25];
 let profileLoaded = false;
 let lastContribs = null;   // cached so the calendar can re-theme on reopen
@@ -5568,12 +5568,12 @@ async function checkForUpdate() {
   if (isOffline()) return { status: 'offline' }; // silently skip the GitHub release check when offline
   try {
     const cur = (state.caps && state.caps.appVersion) || '1.0.0';
-    const r = await (await fetch('https://api.github.com/repos/pipelinear/media-toolbox/releases/latest')).json();
+    const r = await (await fetch('https://api.github.com/repos/Nickkk66/media-toolbox/releases/latest')).json();
     if (!r || !r.tag_name) return { status: 'unknown' };
     const latest = String(r.tag_name).replace(/^v/, '');
     if (cmpVer(latest, cur) > 0) {
       $('unBody').textContent = `v${latest} is out (you have v${cur}).`;
-      const url = r.html_url || 'https://github.com/pipelinear/media-toolbox/releases/latest';
+      const url = r.html_url || 'https://github.com/Nickkk66/media-toolbox/releases/latest';
       $('unDownload').onclick = () => window.api.openExternal(url);
       $('updateNotice').classList.remove('hidden');
       return { status: 'update', latest, current: cur };

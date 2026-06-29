@@ -23,11 +23,11 @@
 <!-- ============================================================= -->
 
 <p align="center">
-  <a href="https://pipelinear.github.io/media-toolbox/">
+  <a href="https://nickkk66.github.io/media-toolbox/">
     <img src="docs/media/promo-poster.png" alt="Watch the media toolbox promo" width="80%" />
   </a>
 </p>
-<p align="center"><em>▶ Click to watch the promo · or see it on the <a href="https://pipelinear.github.io/media-toolbox/">website</a>.</em></p>
+<p align="center"><em>▶ Click to watch the promo · or see it on the <a href="https://nickkk66.github.io/media-toolbox/">website</a>.</em></p>
 
 <p align="center">
   <img src="docs/media/screenshot.png" alt="media toolbox app" width="80%" />
@@ -79,7 +79,7 @@ xattr -cr "/Applications/Media Toolbox.app"
 Vanilla-JS Electron app. No bundler, no framework, no TypeScript.
 
 ```bash
-git clone https://github.com/pipelinear/media-toolbox
+git clone https://github.com/Nickkk66/media-toolbox
 cd media-toolbox
 npm install          # electron + electron-builder (+ onnxruntime-node)
 npm start            # run from source
