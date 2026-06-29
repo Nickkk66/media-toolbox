@@ -23,10 +23,17 @@ asarUnpack:
   # src/songs so the About player can read embedded metadata/cover art if present.
   - "src/songs/**"
 
-# NOTE: the heavy native engines (ffmpeg, yt-dlp, Ghostscript, qpdf, exiftool,
-# Real-ESRGAN, Whisper, Piper, 7-Zip) are NOT bundled. They download on first use
-# (per-OS) from the GitHub "engines-v1" release and cache under <userData>/engines
-# (see src/main/engines.js). That keeps every build tiny.
+# Core media engines (ffmpeg, ffprobe, yt-dlp, 7-Zip) ARE bundled so convert /
+# compress / edit / download work out of the box with no first-run download.
+# scripts/fetch-engines.js populates vendor/bin with the build's own platform
+# binaries in CI (from the engines-v1 release) before packaging; they land in
+# <app>/resources/bin and are resolved by ffmpegPath.js.
+# The heavier / rarer engines (Ghostscript, qpdf, exiftool, Real-ESRGAN, Whisper,
+# Piper) are still fetched on first use and cached under <userData>/engines
+# (see src/main/engines.js), keeping installers from ballooning.
+extraResources:
+  - from: vendor/bin
+    to: bin
 
 # The web installer derives its package download URL from here.
 publish:

@@ -32,6 +32,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Pull this platform's core engine binaries (ffmpeg/ffprobe/yt-dlp/7za)
+      # into vendor/bin so electron-builder bundles them (extraResources).
+      - name: Fetch bundled engines
+        run: node scripts/fetch-engines.js
+
       # electron-builder builds for the host OS automatically. --publish always
       # uploads the artifacts (and, on Windows, the nsis-web package the stub
       # downloads) to the GitHub Release for this version.

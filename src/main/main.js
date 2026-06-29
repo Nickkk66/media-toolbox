@@ -113,10 +113,16 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    const check = await selfCheck();
-    if (!check.ok) {
-      dialog.showErrorBox('ffmpeg not found',
-        'The bundled engine (ffmpeg) could not be started.\n\nIf running from source, place ffmpeg.exe and ffprobe.exe in vendor/bin.\n\nDetails: ' + (check.error || 'unknown error'));
+    // Only warn if ffmpeg is present but won't run (a genuinely broken binary).
+    // If it simply isn't here yet, the on-demand engine system fetches it on
+    // first use — don't scare the user with a startup error in that case.
+    const engines = require('./engines');
+    if (engines.isInstalled('ffmpeg')) {
+      const check = await selfCheck();
+      if (!check.ok) {
+        dialog.showErrorBox('ffmpeg could not start',
+          'The media engine (ffmpeg) is installed but failed to run.\n\nDetails: ' + (check.error || 'unknown error'));
+      }
     }
     registerIpc(() => focused());
     const win = createWindow();
