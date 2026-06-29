@@ -1,8 +1,11 @@
 {
-  "name": "video-compressor",
+  "name": "media-toolbox",
   "version": "1.0.1",
   "description": "Local media toolbox with no file-size limit. Engines download on demand; runs offline once set up.",
-  "author": "Nicky",
+  "author": {
+    "name": "pipelinear",
+    "email": "pipelinear@users.noreply.github.com"
+  },
   "license": "MIT",
   "main": "src/main/main.js",
   "scripts": {

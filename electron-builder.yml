@@ -1,6 +1,6 @@
-appId: com.nicky.videocompressor
-productName: Video Compressor
-copyright: Copyright © 2026 Nicky
+appId: com.pipelinear.mediatoolbox
+productName: Media Toolbox
+copyright: Copyright © 2026 pipelinear
 
 directories:
   output: build
@@ -51,7 +51,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Video Compressor
+  shortcutName: Media Toolbox
   # Keep the public download link stable (the website / README point here).
   artifactName: media-toolbox-Setup.${ext}
   installerIcon: assets/icon.ico

@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const cp = require('child_process');
 
 function findNapiDir(root, depth = 0) {
   if (depth > 10) return null;
@@ -34,20 +35,39 @@ exports.default = async function afterPack(context) {
   try { keepArch = require('electron-builder').Arch[context.arch]; } catch { keepArch = null; }
 
   const napi = findNapiDir(context.appOutDir);
-  if (!napi) return;
-
-  for (const plat of fs.readdirSync(napi)) {
-    const platDir = path.join(napi, plat);
-    if (plat !== keepPlatform) {
-      try { fs.rmSync(platDir, { recursive: true, force: true }); } catch { /* */ }
-      continue;
+  if (napi) {
+    for (const plat of fs.readdirSync(napi)) {
+      const platDir = path.join(napi, plat);
+      if (plat !== keepPlatform) {
+        try { fs.rmSync(platDir, { recursive: true, force: true }); } catch { /* */ }
+        continue;
+      }
+      // Within the kept platform, drop non-target arch dirs (skip for universal).
+      if (keepArch && keepArch !== 'universal') {
+        let archs = [];
+        try { archs = fs.readdirSync(platDir); } catch { archs = []; }
+        for (const a of archs) {
+          if (a !== keepArch) { try { fs.rmSync(path.join(platDir, a), { recursive: true, force: true }); } catch { /* */ } }
+        }
+      }
     }
-    // Within the kept platform, drop non-target arch dirs (skip for universal).
-    if (keepArch && keepArch !== 'universal') {
-      let archs = [];
-      try { archs = fs.readdirSync(platDir); } catch { archs = []; }
-      for (const a of archs) {
-        if (a !== keepArch) { try { fs.rmSync(path.join(platDir, a), { recursive: true, force: true }); } catch { /* */ } }
+  }
+
+  // macOS: ad-hoc sign the app AFTER pruning. Apple Silicon refuses to launch a
+  // wholly unsigned arm64 app ("...is damaged and can't be opened"); an ad-hoc
+  // signature turns that into the normal "unidentified developer" right-click →
+  // Open flow. Done here (not via electron-builder signing) since we ship
+  // without a Developer ID certificate.
+  if (context.electronPlatformName === 'darwin') {
+    let appName = null;
+    try { appName = fs.readdirSync(context.appOutDir).find((f) => f.endsWith('.app')); } catch { /* */ }
+    if (appName) {
+      const appPath = path.join(context.appOutDir, appName);
+      try {
+        cp.execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], { stdio: 'inherit' });
+        console.log('afterPack: ad-hoc signed', appName);
+      } catch (e) {
+        console.warn('afterPack: ad-hoc codesign failed:', e.message);
       }
     }
   }
