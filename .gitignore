@@ -12,3 +12,7 @@ vendor/piper/
 *.log
 # Bundled demo media (copyrighted; kept local only)
 src/songs/
+
+# Promo video projects + the dropped songs (copyrighted audio; kept local only)
+videos/
+while im gone/
