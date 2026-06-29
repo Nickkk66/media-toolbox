@@ -3691,9 +3691,15 @@ function dlRadios(cur, customDir) {
 }
 // Apply theme + accessibility flags to the document.
 function applyClientSettings(s) {
-  const theme = s.theme || 'auto';
-  const dark = theme === 'dark' || (theme === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  document.body.dataset.theme = dark ? 'dark' : 'light';
+  const theme = s.theme || 'creme';
+  // creme is a light-family theme; dark-specific js (player tint, contribution recolor)
+  // checks dataset.theme === 'dark', so creme correctly falls into the non-dark branch.
+  if (theme === 'creme') {
+    document.body.dataset.theme = 'creme';
+  } else {
+    const dark = theme === 'dark' || (theme === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.body.dataset.theme = dark ? 'dark' : 'light';
+  }
   document.body.classList.toggle('reduce-motion', !!s.reduceMotion);
   document.body.classList.toggle('reduce-transparency', !!s.reduceTransparency);
 }
@@ -3872,8 +3878,8 @@ function updateAiFeatureSummary(sec) {
 function settingsHtml(cat, s) {
   if (cat === 'appearance') return `
     <h3 class="set-h">theme</h3>
-    ${seg('theme', s.theme, [['auto', 'auto'], ['light', 'light'], ['dark', 'dark']])}
-    <p class="set-note">auto theme switches between light and dark themes depending on your device's display mode.</p>`;
+    ${seg('theme', s.theme, [['auto', 'auto'], ['creme', 'creme'], ['light', 'light'], ['dark', 'dark']])}
+    <p class="set-note">creme is the default warm theme. auto switches between light and dark depending on your device's display mode.</p>`;
 
   if (cat === 'accessibility') return `
     <h3 class="set-h">visual</h3>

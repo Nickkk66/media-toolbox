@@ -69,19 +69,24 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
 
 /* download button: leading Windows glyph morphs into an arrow while the
    label slides left (Alcove-style). */
+.dl,.src{ border-radius:14px; }
 .dl{ position:relative; padding-left:2.7em; padding-right:1.5em; overflow:hidden; }
 .dl.small{ padding-left:2.5em; padding-right:1.2em; }
 .dl.big{ padding-left:3em; padding-right:1.7em; }
+/* main (hero) CTAs run larger */
+.hero-cta .btn{ font-size:1.12rem; padding-top:1.05em; padding-bottom:1.05em; border-radius:16px; }
 .dl-ic,.dl-arrow{ position:absolute; top:50%; display:inline-flex; }
 .dl-ic svg,.dl-arrow svg{ width:1.15em; height:1.15em; display:block; }
 .dl-ic{ left:1.4em; transform:translate(0,-50%);
   transition:opacity .22s ease, transform .34s cubic-bezier(.22,1,.36,1); }
-.dl-arrow{ right:1.3em; opacity:0; transform:translate(10px,-50%);
-  transition:opacity .22s ease, transform .34s cubic-bezier(.22,1,.36,1); }
-.dl-label{ display:inline-block; transition:transform .34s cubic-bezier(.22,1,.36,1); }
-.dl:hover .dl-ic{ opacity:0; transform:translate(-12px,-50%); }
-.dl:hover .dl-label{ transform:translateX(-1.1em); }
+.dl-arrow{ right:1.25em; opacity:0; transform:translate(16px,-50%);
+  transition:opacity .22s ease, transform .36s cubic-bezier(.22,1,.36,1); }
+.dl-label{ display:inline-block; transition:transform .36s cubic-bezier(.22,1,.36,1); }
+.dl:hover .dl-ic{ opacity:0; transform:translate(-16px,-50%); }
+.dl:hover .dl-label{ transform:translateX(-1.55em); }
 .dl:hover .dl-arrow{ opacity:1; transform:translate(0,-50%); }
+.dl:hover .dl-arrow svg{ animation:arrowNudge .9s ease-in-out infinite .1s; }
+@keyframes arrowNudge{ 0%,100%{ transform:translateX(0) } 50%{ transform:translateX(3px) } }
 
 /* source button: pink 8-point star spins around the GitHub mark on hover. */
 .src .src-mark{ position:relative; display:inline-grid; place-items:center; width:1.25em; height:1.25em; }
@@ -94,7 +99,8 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
 /* ---------- nav ---------- */
 .nav{ position:sticky; top:0; z-index:50; padding:18px 0;
   background:linear-gradient(var(--cream) 62%, rgba(251,238,222,0)); }
-.nav-in{ display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.nav-in{ display:flex; align-items:center; justify-content:space-between; gap:16px;
+  max-width:1480px; padding-left:48px; padding-right:48px; }
 .brand{ display:inline-flex; align-items:center; gap:.6em; font-family:"Bricolage Grotesque",sans-serif; font-weight:800; font-size:2.05rem; line-height:1; }
 .mark{ display:inline-grid; place-items:center; width:54px; height:54px; filter:drop-shadow(var(--shadow-sm)); }
 .mark svg{ width:54px; height:54px; }
@@ -105,6 +111,10 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
 .nav-links{ display:flex; align-items:center; gap:18px; margin-left:auto; }
 .navlink{ display:inline-flex; align-items:center; gap:.4em; font-weight:600; color:var(--ink-soft); }
 .navlink:hover{ color:var(--ink); }
+/* docs: solid ink icon, tips left on hover */
+.docs-link{ transition:transform .26s cubic-bezier(.22,1,.36,1); transform-origin:center; }
+.docs-link .ic{ color:var(--ink); }
+.docs-link:hover{ transform:rotate(-8deg) translateY(-1px); }
 
 /* ---------- hero ---------- */
 .hero{ padding:64px 0 40px; text-align:center; }
@@ -149,7 +159,7 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
 .f{ text-align:center; display:flex; flex-direction:column; align-items:center; gap:1.1rem; }
 .fic{ display:inline-grid; place-items:center; color:var(--ink);
   transition:transform .3s cubic-bezier(.22,1,.36,1); }
-.fic svg{ width:96px; height:96px; stroke-width:2.3; }
+.fic svg{ width:96px; height:96px; stroke-width:1.9; overflow:visible; }
 .f h3{ font-weight:800; font-size:1.4rem; line-height:1.12; }
 .f:hover .fic{ transform:translateY(-6px) scale(1.05); }
 
@@ -182,6 +192,65 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
 .reveal{ opacity:0; transform:translateY(22px); transition:opacity .7s ease, transform .7s ease; }
 .reveal.in{ opacity:1; transform:none; }
 
+/* ====================================================================
+   feature icon hover animations (each tells its own story)
+   ==================================================================== */
+/* convert: the two arrows fly apart, then snap back */
+.f-convert:hover .ar-t{ animation:flyT .7s cubic-bezier(.4,0,.2,1); }
+.f-convert:hover .ar-b{ animation:flyB .7s cubic-bezier(.4,0,.2,1); }
+@keyframes flyT{ 45%{ transform:translate(-17px,-7px); opacity:0 } 55%{ transform:translate(17px,-7px); opacity:0 } 100%{ transform:translate(0,0); opacity:1 } }
+@keyframes flyB{ 45%{ transform:translate(17px,7px); opacity:0 } 55%{ transform:translate(-17px,7px); opacity:0 } 100%{ transform:translate(0,0); opacity:1 } }
+
+/* compress: shrinks small, then springs big, then settles */
+.f-compress:hover .fic svg{ animation:squish .6s cubic-bezier(.34,1.2,.4,1); }
+@keyframes squish{ 30%{ transform:scale(.6) } 68%{ transform:scale(1.16) } 100%{ transform:scale(1) } }
+
+/* download: the arrow presses down onto the line, which flexes */
+.f-download .dl-base{ transform-box:fill-box; transform-origin:center; }
+.f-download:hover .dl-up{ animation:press .6s cubic-bezier(.4,0,.2,1); }
+.f-download:hover .dl-base{ animation:plink .6s cubic-bezier(.4,0,.2,1); }
+@keyframes press{ 38%{ transform:translateY(5px) } 56%{ transform:translateY(5px) } 100%{ transform:translateY(0) } }
+@keyframes plink{ 48%{ transform:scaleX(1.2) } 100%{ transform:scaleX(1) } }
+
+/* remove backgrounds: the scissors snip twice */
+.f-cut .blade{ transform-box:fill-box; transform-origin:60% 55%; }
+.f-cut:hover .blade-a{ animation:snipA .42s ease-in-out 2; }
+.f-cut:hover .blade-b{ animation:snipB .42s ease-in-out 2; }
+@keyframes snipA{ 50%{ transform:rotate(10deg) } }
+@keyframes snipB{ 50%{ transform:rotate(-10deg) } }
+
+/* transcribe: sound waves ripple out of the mic */
+.f-mic .w{ opacity:0; transform-box:fill-box; transform-origin:left center; }
+.f-mic:hover .w1{ animation:son 1.05s ease-out infinite; }
+.f-mic:hover .w2{ animation:son 1.05s ease-out .35s infinite; }
+@keyframes son{ 0%{ opacity:0; transform:scale(.5) } 25%{ opacity:1 } 100%{ opacity:0; transform:scale(1.2) } }
+
+/* on-device ai: turns pink and sparkles */
+.f-ai:hover .fic{ color:#e0588f; }
+.f-ai:hover .fic svg{ animation:twinkle 1s ease-in-out infinite; }
+@keyframes twinkle{ 0%,100%{ transform:scale(1) rotate(0); filter:none }
+  50%{ transform:scale(1.14) rotate(10deg); filter:drop-shadow(0 0 6px rgba(224,88,143,.6)) } }
+
+/* blazing fast: the bolt flickers like lightning */
+.f-bolt:hover .fic{ color:#e8a23d; }
+.f-bolt:hover .fic svg{ animation:zap .55s steps(1,end) infinite; }
+@keyframes zap{ 0%{ opacity:1; transform:scale(1) } 18%{ opacity:.25 } 24%{ opacity:1; transform:scale(1.18) }
+  46%{ opacity:.5 } 52%{ opacity:1 } 100%{ opacity:1; transform:scale(1) } }
+
+/* ====================================================================
+   entrance animations — run once on page load (reload)
+   ==================================================================== */
+.brand{ animation:brandDrop .85s cubic-bezier(.22,1,.36,1) both; }
+@keyframes brandDrop{ 0%{ transform:rotate(7deg) translateY(10px); opacity:0 } 100%{ transform:rotate(0) translateY(0); opacity:1 } }
+.hero h1{ animation:riseIn .9s ease both .12s; }
+.hero .sub{ animation:riseIn .9s ease both .26s; }
+.hero .hero-cta{ animation:riseIn .9s ease both .4s; }
+@keyframes riseIn{ 0%{ opacity:0; transform:translateY(16px) } 100%{ opacity:1; transform:none } }
+.src .gh{ transform-box:fill-box; transform-origin:center;
+  animation:ghPop .6s cubic-bezier(.34,1.45,.4,1) both .55s, ghWink .9s ease 1.5s; }
+@keyframes ghPop{ 0%{ transform:scale(0) rotate(-35deg) } 100%{ transform:scale(1) rotate(0) } }
+@keyframes ghWink{ 0%,80%,100%{ transform:scaleY(1) } 88%{ transform:scaleY(.12) } 94%{ transform:scaleY(1) } }
+
 /* ---------- responsive ---------- */
 @media (max-width:860px){
   .fgrid{ grid-template-columns:repeat(2,1fr); gap:44px 18px; }
@@ -201,4 +270,10 @@ h1,h2,h3{ font-family:"Bricolage Grotesque","Figtree",sans-serif; margin:0; lett
   .reveal{ opacity:1; transform:none; transition:none; }
   .btn:hover,.f:hover .fic,.soc:hover{ transform:none; }
   .src:hover .star8{ animation:none; opacity:1; transform:scale(1); }
+  /* kill entrance + per-icon hover animations */
+  .brand,.hero h1,.hero .sub,.hero .hero-cta,.src .gh,
+  .f :is(svg,g,path,circle),.dl:hover .dl-arrow svg{ animation:none !important; }
+  .f-ai:hover .fic{ color:var(--ink); }
+  .f-bolt:hover .fic{ color:var(--ink); }
+  .docs-link:hover{ transform:none; }
 }

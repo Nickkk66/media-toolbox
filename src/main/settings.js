@@ -32,7 +32,7 @@ function defaults() {
   return {
     // Only real, functional settings. Everything here actually controls behavior.
     firstRun: true, performance: 'recommended', downloadLocation: 'downloads', customDownloadDir: '',
-    theme: 'auto', reduceMotion: false, reduceTransparency: false, offlineMode: false,
+    theme: 'creme', reduceMotion: false, reduceTransparency: false, offlineMode: false,
     ...limitsFor('recommended'),
   };
 }

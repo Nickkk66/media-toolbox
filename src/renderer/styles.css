@@ -871,6 +871,89 @@ body[data-theme="dark"] .switch.on span { background: #fff; }
 /* Destructive action buttons keep their red intent, readable on dark. */
 body[data-theme="dark"] .btn.danger { color: #fff; }
 
+/* Creme theme — warm cream palette mirrored from the advertising website.
+   creme is a light-family theme (dark text on cream), so every dark-override
+   selector that fixed a hardcoded white/grey gets a warm cream equivalent here
+   so nothing reads stark-white on the cream canvas. light/dark are untouched. */
+body[data-theme="creme"] {
+  --canvas: #fbeede; --ink: #2c2622; --carbon: #2b2622; --steel: #e7d6bf; --graphite: #6f6356; --link: #0071bb;
+  /* accent kept subtle and warm (no loud blue fills) — ink-toned. */
+  --accent: #2b2622; --accent-hover: #3a322b; --accent-soft: rgba(44, 38, 34, 0.10);
+}
+/* inputs / lists / avatars / thumbs / swatches → warm panel (was dark #1e1e23). */
+body[data-theme="creme"] input, body[data-theme="creme"] select, body[data-theme="creme"] .cs-btn,
+body[data-theme="creme"] .cs-list, body[data-theme="creme"] .gh-avatar, body[data-theme="creme"] .cp-canvas,
+body[data-theme="creme"] .cp-swatch, body[data-theme="creme"] .yt-thumb, body[data-theme="creme"] .to-field input,
+body[data-theme="creme"] .to-field select { background: #f6e3cf; }
+body[data-theme="creme"] .navsearch-input { background: #f6e3cf; }
+body[data-theme="creme"] input[type="checkbox"] { background: #fff7ec; }
+body[data-theme="creme"] .tts-text textarea { background: #f6e3cf; }
+body[data-theme="creme"] .inst-input input { background: #f6e3cf; }
+body[data-theme="creme"] .me-fields input { background: #f6e3cf; }
+body[data-theme="creme"] .act-btn { background: #f6e3cf; }
+/* home cards — hover/hot must not turn white; use a deeper warm cream. */
+body[data-theme="creme"] .home-card:hover,
+body[data-theme="creme"] .home-card.hot { background: #f0dcc2; }
+body[data-theme="creme"] .home-card.hot-near { background: rgba(44, 38, 34, .04); }
+body[data-theme="creme"] .home-title { color: var(--ink); }
+body[data-theme="creme"] .home-desc { color: var(--graphite); }
+/* flight status card — warm empty track. */
+body[data-theme="creme"] .gh-fl-line { background: #e7d6bf; }
+/* audio player — warm raised card. */
+body[data-theme="creme"] .aplayer { background: #fff7ec !important; box-shadow: none; border-color: var(--steel); }
+body[data-theme="creme"] .ap-title { color: var(--ink); }
+body[data-theme="creme"] .ap-times { color: rgba(44,38,34,.7); }
+body[data-theme="creme"] .ap-fill { background: var(--ink); }
+body[data-theme="creme"] .ap-slider { background: rgba(44,38,34,.14); }
+body[data-theme="creme"] .ap-controls { background: none; border-top-color: var(--steel); }
+body[data-theme="creme"] .ap-btn { color: var(--ink); }
+body[data-theme="creme"] .ap-btn:hover { background: rgba(44,38,34,.08); }
+body[data-theme="creme"] .ap-btn.active { background: rgba(44,38,34,.12); }
+body[data-theme="creme"] .ap-cover { background: rgba(44,38,34,.05); border-color: var(--steel); }
+body[data-theme="creme"].reduce-transparency .aplayer { background: #fff7ec !important; }
+body[data-theme="creme"].reduce-transparency .ap-controls { background: none !important; }
+/* buttons — neutral warm raised panel (no blue fills), matching dark's intent. */
+body[data-theme="creme"] .btn.primary { background: #f0dcc2; border-color: #e0caaf; color: var(--ink); }
+body[data-theme="creme"] .btn.primary:hover { background: #ead0b0; border-color: #d4b994; }
+body[data-theme="creme"] .btn.primary .ic { color: var(--ink); }
+body[data-theme="creme"] .btn.primary:disabled { background: #f6e3cf; border-color: #e7d6bf; color: var(--graphite); }
+body[data-theme="creme"] .switch.on { background: #6f6356; border-color: #6f6356; }
+body[data-theme="creme"] .switch.on span { background: #fff7ec; }
+body[data-theme="creme"] .btn.danger { color: #fff; }
+/* settings active tab + segmented control — warm neutral highlight (not blue). */
+body[data-theme="creme"] .set-cat.on { background: #f0dcc2; color: var(--ink); }
+body[data-theme="creme"] .set-cat.on .ic { color: var(--ink); }
+body[data-theme="creme"] #settingsModal .seg-btn.on { background: #f0dcc2; color: var(--ink); }
+/* toolbar hover. */
+body[data-theme="creme"] .tb-btn:hover, body[data-theme="creme"] .tb-close:hover { background: rgba(44,38,34,.06); color: var(--ink); }
+/* region picker stage/box. */
+body[data-theme="creme"] .region-stage { background: #f6e3cf; }
+body[data-theme="creme"] .region-box { border-color: var(--ink); background: rgba(44,38,34,0.10); }
+body[data-theme="creme"] .rb-h { background: var(--ink); border-color: #f6e3cf; }
+/* photo effects / privacy blur / pdf stages — warm panel (was near-black). */
+body[data-theme="creme"] .fx-cp { background: #fff7ec; border-color: var(--accent); }
+body[data-theme="creme"] .fx-cp-hex { background: #fff7ec; }
+body[data-theme="creme"] .fx-cp-done:hover { background: var(--accent); border-color: var(--accent); color: #fbeede; }
+body[data-theme="creme"] .fx-swatch, body[data-theme="creme"] .fx-stage { background: #f6e3cf; }
+body[data-theme="creme"] .fx-seg-btn.on, body[data-theme="creme"] .fx-stack-item.selected { background: var(--accent); border-color: var(--accent); color: #fbeede; }
+body[data-theme="creme"] .fx-presets-menu { border-color: var(--accent); }
+body[data-theme="creme"] .fx-preset-opt:hover, body[data-theme="creme"] .fx-btn:active { background: var(--accent); color: #fbeede; }
+body[data-theme="creme"] .pb-stage { background: #f6e3cf; }
+body[data-theme="creme"] .pb-ic-btn:hover { border-color: var(--accent); color: var(--accent); }
+body[data-theme="creme"] .pdf-stage { background: #f6e3cf; }
+body[data-theme="creme"] .po-thumb { background: #f6e3cf; }
+body[data-theme="creme"] .po-ic:hover:not(:disabled) { color: var(--accent); }
+/* contribution graph — keep the github green ramp, warm the empty cell. */
+body[data-theme="creme"] .gh-l0 { background: #efe0cb; }
+body[data-theme="creme"] .gh-l1 { background: #9be9a8; }
+body[data-theme="creme"] .gh-l2 { background: #40c463; }
+body[data-theme="creme"] .gh-l3 { background: #30a14e; }
+body[data-theme="creme"] .gh-l4 { background: #216e39; }
+/* youtube supported-services block — warm panel (was hard-coded white). */
+body[data-theme="creme"] .yt-services { background: #fff7ec; border-color: var(--steel); }
+body[data-theme="creme"] .yt-services-head { color: var(--graphite); }
+body[data-theme="creme"] .yt-chip { border-color: var(--ink); color: var(--ink); }
+
 /* Accessibility */
 body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after { transition: none !important; animation: none !important; }
 body.reduce-transparency .aplayer { backdrop-filter: none !important; background: #f0f1f3 !important; }
