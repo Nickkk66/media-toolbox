@@ -65,11 +65,14 @@
       </a>
     </div>
 
-    <div class="stage">
-      <div class="shot">
-        <img src="img/home.png" alt="media toolbox home screen" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
-        <div class="ph" style="display:none"><span class="ic"><svg viewBox="0 0 24 24"><use href="#i-fx"/></svg></span><span>screenshot: app home<br/><small>add docs/img/home.png (~1600x1000)</small></span></div>
-      </div>
+    <div class="stage" id="stage">
+      <div class="ambient" id="ambient" aria-hidden="true"></div>
+      <button class="shot" id="heroShot" aria-label="Play the media toolbox promo">
+        <video id="heroVideo" class="hero-vid" muted playsinline preload="auto" poster="media/promo-poster.png">
+          <source src="media/promo.mp4" type="video/mp4" />
+        </video>
+        <span class="play-hint" id="playHint"><span class="play-ic"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></span> Watch it work</span>
+      </button>
       <p class="hint"><span class="tri"></span> Psst&hellip; it all runs offline, on your machine.</p>
     </div>
   </div>
