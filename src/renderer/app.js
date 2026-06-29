@@ -182,7 +182,7 @@ function showHome() {
   state.section = 'home'; state.ws = null; state.backTo = 'home';
   state.currentTool = null; updateFavBtn();
   hideAll();
-  setHero('Media Toolbox', 'Your local media workshop');
+  setHero('Media Toolbox', '');
   $('homeView').classList.remove('hidden');
 }
 function showSection(section) {
@@ -1469,14 +1469,14 @@ function pbDrawSource() {
   pbSrcCtx.drawImage(pbState.source, 0, 0, w, h);
   if (pbState.apply !== 'areas') {
     // whole-image mode → shade the whole canvas to signal it
-    pbSrcCtx.fillStyle = 'rgba(0,113,187,0.10)';
+    pbSrcCtx.fillStyle = 'rgba(224,88,143,0.10)';
     pbSrcCtx.fillRect(0, 0, w, h);
     return;
   }
   // committed actions
   pbSrcCtx.save();
-  pbSrcCtx.strokeStyle = '#0071bb'; pbSrcCtx.lineWidth = 1;
-  pbSrcCtx.fillStyle = 'rgba(0,113,187,0.18)';
+  pbSrcCtx.strokeStyle = '#e0588f'; pbSrcCtx.lineWidth = 1;
+  pbSrcCtx.fillStyle = 'rgba(224,88,143,0.18)';
   for (const a of pbState.actions) pbOverlayAction(pbSrcCtx, a);
   // in-progress drag rectangle
   if (pbState.dragging && pbState.dragStart && pbState.dragCur) {
@@ -1864,7 +1864,7 @@ function pcDraw() {
     pcCtx.rect(r.x, r.y, r.w, r.h);
     pcCtx.fill('evenodd');
     pcCtx.restore();
-    pcCtx.strokeStyle = '#0071bb'; pcCtx.lineWidth = 1.5;
+    pcCtx.strokeStyle = '#e0588f'; pcCtx.lineWidth = 1.5;
     pcCtx.strokeRect(r.x + 0.5, r.y + 0.5, r.w, r.h);
   }
 }
@@ -2194,8 +2194,8 @@ function wmDrawSource() {
   wmSrcCv.width = w; wmSrcCv.height = h;
   wmSrcCtx.drawImage(wmState.source, 0, 0, w, h);
   wmSrcCtx.save();
-  wmSrcCtx.strokeStyle = '#0071bb'; wmSrcCtx.lineWidth = 1;
-  wmSrcCtx.fillStyle = 'rgba(0,113,187,0.18)';
+  wmSrcCtx.strokeStyle = '#e0588f'; wmSrcCtx.lineWidth = 1;
+  wmSrcCtx.fillStyle = 'rgba(224,88,143,0.18)';
   for (const a of wmState.actions) wmOverlayAction(wmSrcCtx, a);
   if (wmState.dragging && wmState.dragStart && wmState.dragCur) {
     const r = pbRectFrom(wmState.dragStart, wmState.dragCur);
@@ -5146,7 +5146,7 @@ function animateSignature() {
   const p = $('sigPath'); if (!p) return;
   // Theme-aware stroke: white on the dark canvas; a non-black accent (--link) in light mode.
   const dark = document.body.dataset.theme === 'dark';
-  const link = getComputedStyle(document.body).getPropertyValue('--link').trim() || '#0071bb';
+  const link = getComputedStyle(document.body).getPropertyValue('--link').trim() || '#e0588f';
   p.setAttribute('stroke', dark ? '#ffffff' : link);
   const len = p.getTotalLength();
   p.style.transition = 'none'; p.style.strokeDasharray = len; p.style.strokeDashoffset = len;
@@ -5467,21 +5467,11 @@ async function init() {
   $('settingsBtn').addEventListener('click', () => openSettings('appearance'));
   document.querySelectorAll('#homeView .home-card').forEach((c) => {
     c.addEventListener('click', () => { if (c.dataset.tool === 'metadata') { state.backTo = 'home'; openMetaEditor(); } else if (c.dataset.tool === 'downloader') { state.backTo = 'home'; openSpecial('youtube'); } else if (c.dataset.tool === 'ai') { state.backTo = 'home'; openAiHub(); } else if (c.dataset.tool === 'spotify') { state.backTo = 'home'; openSpotify(); } else showSection(c.dataset.section); });
-    // Fluid hover: the hovered card gets the full highlight and its immediate
-    // neighbours get a softer tint, so the highlight "spills" instead of being
-    // sharply contained. CSS can't select previous siblings, so do it in JS.
-    c.addEventListener('mouseenter', () => {
-      c.classList.add('hot');
-      const prev = c.previousElementSibling, next = c.nextElementSibling;
-      if (prev && prev.classList.contains('home-card')) prev.classList.add('hot-near');
-      if (next && next.classList.contains('home-card')) next.classList.add('hot-near');
-    });
-    c.addEventListener('mouseleave', () => {
-      c.classList.remove('hot');
-      const prev = c.previousElementSibling, next = c.nextElementSibling;
-      if (prev) prev.classList.remove('hot-near');
-      if (next) next.classList.remove('hot-near');
-    });
+    // Hover spill: the hovered card itself lifts/scales slightly OUT of its box
+    // (raised z-index + transform in CSS). Neighbours are left untouched so the
+    // highlight never blankets or recolors them.
+    c.addEventListener('mouseenter', () => { c.classList.add('hot'); });
+    c.addEventListener('mouseleave', () => { c.classList.remove('hot'); });
   });
   wireTitlebar(); wireStretch(); wireMetaEditor();
   $('settingsClose').addEventListener('click', () => $('settingsModal').classList.add('hidden'));

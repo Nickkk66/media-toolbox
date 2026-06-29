@@ -6,7 +6,8 @@
   --carbon: #0f0e12;
   --steel: #e5e5e5;
   --graphite: #7c7c7c;
-  --link: #0071bb;
+  --link: #d6447f;
+  --accent: #e0588f; --accent-hover: #d6447f; --accent-soft: rgba(224, 88, 143, 0.18);
 
   --thin: 100;
   --light: 300;
@@ -152,12 +153,13 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--s33) var(--s66);
 .home-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
   background: none; border: none; border-right: 1px solid var(--steel); border-bottom: 1px solid var(--steel);
-  padding: var(--s33); cursor: pointer; text-align: left; transition: background .15s;
+  padding: var(--s33); cursor: pointer; text-align: left;
 }
-/* Fluid hover: hovered card gets the full highlight, immediate neighbours a
-   softer tint so it "spills" rather than being sharply contained (see app.js). */
-.home-card:hover, .home-card.hot { background: #fff; }
-.home-card.hot-near { background: rgba(0, 0, 0, .035); }
+/* Hover spill: the hovered card lifts and scales slightly OUT of its own box
+   (raised z-index so it overflows its bounds) instead of bleeding into its
+   neighbours. Neighbours are left untouched (see app.js). */
+.home-card { position: relative; z-index: 0; transition: background .15s, transform .18s cubic-bezier(0.22, 1, 0.36, 1), box-shadow .18s ease; }
+.home-card:hover, .home-card.hot { background: #fff; z-index: 3; transform: scale(1.04); box-shadow: 0 6px 22px rgba(0, 0, 0, .10); }
 .home-ic { width: 28px; height: 28px; color: var(--ink); }
 .home-ic svg { width: 100%; height: 100%; stroke-width: 1.1; }
 .home-title { font-size: 24px; font-weight: var(--light); }
@@ -579,12 +581,16 @@ body[data-theme="dark"] .po-ic:hover:not(:disabled) { color: var(--accent); }
 /* Custom frameless titlebar — white, blends into the canvas, stays on top */
 .titlebar { position: sticky; top: 0; z-index: 200; height: 30px; display: flex; align-items: center; justify-content: flex-end; background: var(--canvas); color: var(--ink); -webkit-app-region: drag; user-select: none; }
 .tb-title { position: absolute; left: 0; right: 0; text-align: center; font-size: 11px; font-weight: var(--thin); letter-spacing: .06em; color: var(--graphite); pointer-events: none; }
-.tb-controls { display: flex; -webkit-app-region: no-drag; height: 100%; z-index: 1; }
-.tb-btn { width: 46px; height: 30px; background: none; border: none; color: var(--graphite); cursor: pointer; display: grid; place-items: center; transition: background .12s, color .12s; }
+/* Window controls — on-brand warm rounded-square hovers. Each glyph sits in a
+   28x22 rounded chip that tints the warm panel colour on hover; the close button
+   tints pink with a light glyph. Functional ids/IPC are unchanged. */
+.tb-controls { display: flex; align-items: center; gap: 2px; padding: 0 6px 0 0; -webkit-app-region: no-drag; height: 100%; z-index: 1; }
+.tb-btn { width: 30px; height: 22px; padding: 0; background: none; border: none; border-radius: 6px; color: var(--graphite); cursor: pointer; display: grid; place-items: center; transition: background .12s ease, color .12s ease; }
 .tb-btn svg { display: block; }
-.tb-btn:hover { background: rgba(0,0,0,.06); color: var(--ink); }
-.tb-close:hover { background: rgba(0,0,0,.06); color: var(--ink); }
-body[data-theme="dark"] .tb-btn:hover, body[data-theme="dark"] .tb-close:hover { background: rgba(255,255,255,.08); color: var(--ink); }
+.tb-btn:hover { background: var(--steel); color: var(--ink); }
+.tb-close:hover { background: #e0588f; color: #fff; }
+body[data-theme="dark"] .tb-btn:hover { background: #2f2f37; color: var(--ink); }
+body[data-theme="dark"] .tb-close:hover { background: #e0588f; color: #fff; }
 
 /* Toasts — smooth slide + fade */
 .toasts { position: fixed; top: 42px; right: 16px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
@@ -822,9 +828,9 @@ body[data-theme="dark"] .yt-chip { border-color: #44444e; color: var(--ink); }
 
 /* Dark theme */
 body[data-theme="dark"] {
-  --canvas: #161619; --ink: #f1f1ef; --carbon: #0c0c0f; --steel: #2b2b31; --graphite: #8a8a92; --link: #5aa9e6;
-  /* Blue accent for highlighted/active/primary states (reads well on #161619). */
-  --accent: #3b82f6; --accent-hover: #2f6fed; --accent-soft: rgba(59, 130, 246, 0.18);
+  --canvas: #161619; --ink: #f1f1ef; --carbon: #0c0c0f; --steel: #2b2b31; --graphite: #8a8a92; --link: #f48fb6;
+  /* Pink accent for highlighted/active/primary states (lighter pink reads well on #161619). */
+  --accent: #f48fb6; --accent-hover: #e0588f; --accent-soft: rgba(244, 143, 182, 0.18);
 }
 body[data-theme="dark"] input, body[data-theme="dark"] select, body[data-theme="dark"] .cs-btn,
 body[data-theme="dark"] .cs-list, body[data-theme="dark"] .gh-avatar, body[data-theme="dark"] .cp-canvas,
@@ -835,8 +841,7 @@ body[data-theme="dark"] .to-field select { background: #1e1e23; }
    Light mode is untouched; these only scope to the dark theme. */
 /* Home card hover must NOT turn white (it hides the text in dark) — use a lighter dark hue. */
 body[data-theme="dark"] .home-card:hover,
-body[data-theme="dark"] .home-card.hot { background: #20202a; }
-body[data-theme="dark"] .home-card.hot-near { background: rgba(255, 255, 255, .045); }
+body[data-theme="dark"] .home-card.hot { background: #20202a; box-shadow: 0 6px 22px rgba(0, 0, 0, .45); }
 body[data-theme="dark"] .home-title { color: var(--ink); }
 body[data-theme="dark"] .home-desc { color: var(--graphite); }
 /* Flight status card already uses theme vars; nudge the empty track for contrast on dark. */
@@ -876,9 +881,9 @@ body[data-theme="dark"] .btn.danger { color: #fff; }
    selector that fixed a hardcoded white/grey gets a warm cream equivalent here
    so nothing reads stark-white on the cream canvas. light/dark are untouched. */
 body[data-theme="creme"] {
-  --canvas: #fbeede; --ink: #2c2622; --carbon: #2b2622; --steel: #e7d6bf; --graphite: #6f6356; --link: #0071bb;
-  /* accent kept subtle and warm (no loud blue fills) — ink-toned. */
-  --accent: #2b2622; --accent-hover: #3a322b; --accent-soft: rgba(44, 38, 34, 0.10);
+  --canvas: #fbeede; --ink: #2c2622; --carbon: #2b2622; --steel: #e7d6bf; --graphite: #6f6356; --link: #d6447f;
+  /* pink accent for highlighted/active links on the warm cream canvas. */
+  --accent: #e0588f; --accent-hover: #d6447f; --accent-soft: rgba(224, 88, 143, 0.10);
 }
 /* inputs / lists / avatars / thumbs / swatches → warm panel (was dark #1e1e23). */
 body[data-theme="creme"] input, body[data-theme="creme"] select, body[data-theme="creme"] .cs-btn,
@@ -893,8 +898,7 @@ body[data-theme="creme"] .me-fields input { background: #f6e3cf; }
 body[data-theme="creme"] .act-btn { background: #f6e3cf; }
 /* home cards — hover/hot must not turn white; use a deeper warm cream. */
 body[data-theme="creme"] .home-card:hover,
-body[data-theme="creme"] .home-card.hot { background: #f0dcc2; }
-body[data-theme="creme"] .home-card.hot-near { background: rgba(44, 38, 34, .04); }
+body[data-theme="creme"] .home-card.hot { background: #f0dcc2; box-shadow: 0 6px 22px rgba(44, 38, 34, .14); }
 body[data-theme="creme"] .home-title { color: var(--ink); }
 body[data-theme="creme"] .home-desc { color: var(--graphite); }
 /* flight status card — warm empty track. */
@@ -903,12 +907,12 @@ body[data-theme="creme"] .gh-fl-line { background: #e7d6bf; }
 body[data-theme="creme"] .aplayer { background: #fff7ec !important; box-shadow: none; border-color: var(--steel); }
 body[data-theme="creme"] .ap-title { color: var(--ink); }
 body[data-theme="creme"] .ap-times { color: rgba(44,38,34,.7); }
-body[data-theme="creme"] .ap-fill { background: var(--ink); }
+body[data-theme="creme"] .ap-fill { background: #e0588f; }
 body[data-theme="creme"] .ap-slider { background: rgba(44,38,34,.14); }
 body[data-theme="creme"] .ap-controls { background: none; border-top-color: var(--steel); }
 body[data-theme="creme"] .ap-btn { color: var(--ink); }
 body[data-theme="creme"] .ap-btn:hover { background: rgba(44,38,34,.08); }
-body[data-theme="creme"] .ap-btn.active { background: rgba(44,38,34,.12); }
+body[data-theme="creme"] .ap-btn.active { background: rgba(224,88,143,.14); color: #d6447f; }
 body[data-theme="creme"] .ap-cover { background: rgba(44,38,34,.05); border-color: var(--steel); }
 body[data-theme="creme"].reduce-transparency .aplayer { background: #fff7ec !important; }
 body[data-theme="creme"].reduce-transparency .ap-controls { background: none !important; }
@@ -925,7 +929,8 @@ body[data-theme="creme"] .set-cat.on { background: #f0dcc2; color: var(--ink); }
 body[data-theme="creme"] .set-cat.on .ic { color: var(--ink); }
 body[data-theme="creme"] #settingsModal .seg-btn.on { background: #f0dcc2; color: var(--ink); }
 /* toolbar hover. */
-body[data-theme="creme"] .tb-btn:hover, body[data-theme="creme"] .tb-close:hover { background: rgba(44,38,34,.06); color: var(--ink); }
+body[data-theme="creme"] .tb-btn:hover { background: #f0dcc2; color: var(--ink); }
+body[data-theme="creme"] .tb-close:hover { background: #e0588f; color: #fff7ec; }
 /* region picker stage/box. */
 body[data-theme="creme"] .region-stage { background: #f6e3cf; }
 body[data-theme="creme"] .region-box { border-color: var(--ink); background: rgba(44,38,34,0.10); }
@@ -1122,7 +1127,7 @@ body[data-theme="dark"] .me-lightbox { background: rgba(0,0,0,.82); }
 
 /* Image metadata: grouped editable inputs + scrollable read-only field list. */
 .me-group { margin-bottom: var(--s22); grid-column: 1 / -1; }
-.me-group-title { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent, #0071bb); border-bottom: 1px solid var(--steel); padding-bottom: 6px; margin-bottom: 12px; }
+.me-group-title { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent, #e0588f); border-bottom: 1px solid var(--steel); padding-bottom: 6px; margin-bottom: 12px; }
 .me-group-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px var(--s15); }
 .me-empty-note { font-size: 12px; color: var(--graphite); }
 .me-readonly { margin-top: var(--s22); }

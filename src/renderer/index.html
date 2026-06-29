@@ -11,9 +11,9 @@
     <div id="titlebar" class="titlebar">
       <div class="tb-title">media toolbox</div>
       <div class="tb-controls">
-        <button id="tbMin" class="tb-btn" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1" /></svg></button>
-        <button id="tbMax" class="tb-btn" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1" /></svg></button>
-        <button id="tbClose" class="tb-btn tb-close" title="Close" aria-label="Close"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1" /><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" stroke-width="1" /></svg></button>
+        <button id="tbMin" class="tb-btn" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><line x1="1.5" y1="5" x2="8.5" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button>
+        <button id="tbMax" class="tb-btn" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.6" y="1.6" width="6.8" height="6.8" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2" /></svg></button>
+        <button id="tbClose" class="tb-btn tb-close" title="Close" aria-label="Close"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><line x1="2" y1="2" x2="8" y2="8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /><line x1="8" y1="2" x2="2" y2="8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button>
       </div>
     </div>
 
@@ -633,7 +633,7 @@
                 <option value="custom">Custom color…</option>
               </select>
             </label>
-            <label class="field" id="rbColorField" style="display:none"><span>Color</span><input id="rbColor" type="color" value="#0071bb"/></label>
+            <label class="field" id="rbColorField" style="display:none"><span>Color</span><input id="rbColor" type="color" value="#e0588f"/></label>
             <p class="hint" id="rbAutoHint">Automatic uses a local AI model. After running, switch to a refine brush below to clean up the edges.</p>
             <button id="rbRun" class="btn primary big" disabled>Remove background <span class="ic" data-icon="arrowRight"></span></button>
             <div id="rbProgress" class="yt-progress hidden"><div class="bar"><div id="rbBar" class="bar-fill"></div></div><div id="rbStatus" class="fr-status"></div></div>
